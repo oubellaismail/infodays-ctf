@@ -1,0 +1,27 @@
+# Copy this file to terraform.tfvars and fill in your actual values
+# NEVER commit terraform.tfvars to git
+
+# DigitalOcean API token with read/write permissions
+do_token = "YOUR_DO_API_TOKEN_HERE"
+
+# SPACES CREDENTIALS — set as environment variables BEFORE running terraform init:
+#   export AWS_ACCESS_KEY_ID="YOUR_SPACES_ACCESS_KEY_HERE"
+#   export AWS_SECRET_ACCESS_KEY="YOUR_SPACES_SECRET_KEY_HERE"
+# These are NOT Terraform variables — the S3 backend reads them from the environment.
+
+# DigitalOcean API token for DNS management (used by cert-manager)
+# Can be the same as do_token
+do_dns_token = "YOUR_DO_DNS_TOKEN_HERE"
+
+# Email address for Let's Encrypt ACME registration
+letsencrypt_email = "ops@infodays.net"
+
+# Optional: Override defaults below if needed
+# cluster_name          = "infodays-ctf"
+# cluster_region        = "fra1"
+# cluster_version       = "1.28"
+# node_size             = "s-4vcpu-8gb"
+# node_count            = 4
+# registry_name         = "infodays-registry"
+# registry_tier         = "starter"
+# use_letsencrypt_staging = false

@@ -1,0 +1,48 @@
+# Terraform state and locks (everything except bootstrap lock file)
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+infra/terraform/.terraform.lock.hcl
+infra/terraform/terraform.tfvars
+
+# Bootstrap state (local only, not shared)
+infra/spaces-bootstrap/.terraform/
+infra/spaces-bootstrap/*.tfstate
+infra/spaces-bootstrap/*.tfstate.backup
+infra/spaces-bootstrap/.terraform.lock.hcl
+
+# Temporary files
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.iml
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Environment files
+.env
+.env.local
+*.tfvars
+!*.tfvars.example
+
+# Kubeconfig files
+*.kubeconfig
+kubeconfig*
+
+# Logs
+*.log
+*_log.txt
+
+# Temporary shell scripts/outputs
+/tmp/
+*.tmp
