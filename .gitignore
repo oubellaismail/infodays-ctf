@@ -52,3 +52,8 @@ k8s/ctfd/secrets.local.yaml
 
 # Team import data (contains real credentials)
 data/teams.csv
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
