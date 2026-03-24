@@ -37,7 +37,7 @@ provider "digitalocean" {
 }
 
 resource "digitalocean_spaces_bucket" "tfstate" {
-  name   = "infodays-tfstate"
+  name   = "infodays-ctf-tfstate"
   region = "fra1"
   acl    = "private"
 

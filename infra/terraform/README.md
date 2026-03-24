@@ -7,8 +7,8 @@ This module provisions the complete InfoDays CTF infrastructure on DigitalOcean:
 Before running Terraform:
 
 - [ ] **DNS delegated**: `infodays.net` is on Cloudflare nameservers, with NS records in Cloudflare delegating `ctfd.infodays.net` and `challenges.infodays.net` to DigitalOcean (`ns1/ns2/ns3.digitalocean.com`). The root domain must NOT be moved to DigitalOcean (it hosts a separate Netlify site). See [DNS Architecture](#dns-architecture) below.
-- [ ] **Bootstrap done**: Spaces bucket `infodays-tfstate` exists (run `infra/spaces-bootstrap/` first)
-- [ ] **Terraform state backend**: `infodays-tfstate` bucket is accessible with your Spaces credentials
+- [ ] **Bootstrap done**: Spaces bucket `infodays-ctf-tfstate` exists (run `infra/spaces-bootstrap/` first)
+- [ ] **Terraform state backend**: `infodays-ctf-tfstate` bucket is accessible with your Spaces credentials
 - [ ] **DigitalOcean API tokens**: You have both `do_token` (cluster/registry/DNS) and `do_dns_token` (DNS-01 ACME)
 - [ ] **Terraform ≥1.5**: Installed and in your PATH
 - [ ] **kubectl**: Installed locally for post-apply validation
@@ -51,7 +51,7 @@ These are the same Spaces access key and secret key used for the bootstrap bucke
 terraform init
 ```
 
-Terraform will connect to the `infodays-tfstate` Spaces bucket and download providers.
+Terraform will connect to the `infodays-ctf-tfstate` Spaces bucket and download providers.
 
 ### 5. Plan and Review
 
@@ -72,18 +72,38 @@ Review the output. You should see:
 
 Due to a bootstrap ordering constraint (`kubernetes_manifest` resources require the cluster API to be reachable during plan), apply must be run in **two passes**:
 
-**Pass 1** — cluster and registry only:
+**Pass 1** — cluster only (registry must be imported if it already exists):
 ```bash
 terraform apply \
   -target=digitalocean_kubernetes_cluster.infodays \
   -target=digitalocean_container_registry.infodays \
-  -target=digitalocean_container_registry_docker_credentials.pull
+  -auto-approve
 ```
 
-**Pass 2** — everything else (namespaces, ingress, cert-manager, DNS):
+**Pass 2** — save kubeconfig, then install namespaces and Helm releases (cert-manager CRDs must exist before Pass 3):
 ```bash
-terraform apply
+doctl kubernetes cluster kubeconfig save infodays-ctf
+
+terraform apply \
+  -target=kubernetes_namespace.cert_manager \
+  -target=kubernetes_namespace.ctfd \
+  -target=kubernetes_namespace.challenges \
+  -target=kubernetes_namespace.monitoring \
+  -target=kubernetes_namespace.ingress_nginx \
+  -target=helm_release.ingress_nginx \
+  -target=helm_release.cert_manager \
+  -auto-approve
 ```
+
+**Pass 3** — everything else (ClusterIssuer, certificates, DNS, network policies):
+```bash
+terraform apply -auto-approve
+```
+
+> **Note**: If the container registry already exists in DigitalOcean (e.g. after a manual dashboard delete that left the name reserved), import it before Pass 1:
+> ```bash
+> terraform import digitalocean_container_registry.infodays infodays-registry
+> ```
 
 Total time: **15–20 minutes**.
 
@@ -143,7 +163,7 @@ terraform output -raw kubeconfig | base64 -d > kubeconfig.yaml
 
 ## Managing State
 
-The Terraform state is stored remotely in the `infodays-tfstate` Spaces bucket. This allows sharing the state with team members.
+The Terraform state is stored remotely in the `infodays-ctf-tfstate` Spaces bucket. This allows sharing the state with team members.
 
 ```bash
 # View state summary

@@ -4,7 +4,7 @@ This is a **one-time bootstrap step** that must be run ONCE before initializing 
 
 ## Purpose
 
-Create the DigitalOcean Spaces bucket (`infodays-tfstate`) that will store the Terraform state for the main cluster module. This uses **local state** (not stored in the bucket being created).
+Create the DigitalOcean Spaces bucket (`infodays-ctf-tfstate`) that will store the Terraform state for the main cluster module. This uses **local state** (not stored in the bucket being created).
 
 ## Prerequisites
 
@@ -35,7 +35,7 @@ terraform init
 terraform apply
 ```
 
-Confirm and verify that the output shows the bucket name `infodays-tfstate`.
+Confirm and verify that the output shows the bucket name `infodays-ctf-tfstate`.
 
 ### Step 3: Proceed to Main Module
 

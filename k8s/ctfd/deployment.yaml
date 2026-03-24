@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ctfd
+  namespace: ctfd
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ctfd
+  template:
+    metadata:
+      labels:
+        app: ctfd
+    spec:
+      initContainers:
+      - name: wait-for-mysql
+        image: busybox
+        command:
+        - sh
+        - -c
+        - until nc -z mysql 3306; do echo waiting for mysql; sleep 2; done
+      containers:
+      - name: ctfd
+        image: ctfd/ctfd:latest
+        env:
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ctfd-secrets
+              key: MYSQL_PASSWORD
+        - name: DATABASE_URL
+          value: mysql+pymysql://ctfd:$(MYSQL_PASSWORD)@mysql/ctfd
+        - name: REDIS_URL
+          value: redis://redis:6379
+        - name: SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: ctfd-secrets
+              key: SECRET_KEY
+        - name: SERVER_SENT_EVENTS
+          value: "false"
+        - name: WORKERS
+          value: "4"
+        - name: REVERSE_PROXY
+          value: "true"
+        - name: HTTP_RELATIVE_PATH
+          value: "/"
+        - name: SESSION_COOKIE_SECURE
+          value: "true"
+        - name: SESSION_COOKIE_HTTPONLY
+          value: "true"
+        - name: MAIL_SERVER
+          value: ""
+        - name: MAIL_PORT
+          value: ""
+        - name: MAIL_USERNAME
+          value: ""
+        - name: MAIL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ctfd-secrets
+              key: MAIL_PASSWORD
+        - name: MAILFROM_ADDR
+          value: ""
+        ports:
+        - containerPort: 8000
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi

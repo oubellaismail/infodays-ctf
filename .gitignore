@@ -46,3 +46,14 @@ kubeconfig*
 # Temporary shell scripts/outputs
 /tmp/
 *.tmp
+
+# K8s secrets (template only; real values gitignored)
+k8s/ctfd/secrets.local.yaml
+
+# Team import data (contains real credentials)
+data/teams.csv
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
