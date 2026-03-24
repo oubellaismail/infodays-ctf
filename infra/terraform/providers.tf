@@ -20,7 +20,7 @@ terraform {
     endpoints = {
       s3 = "https://fra1.digitaloceanspaces.com"
     }
-    bucket                      = "infodays-tfstate"
+    bucket                      = "infodays-ctf-tfstate"
     key                         = "cluster/terraform.tfstate"
     region                      = "us-east-1"
     skip_credentials_validation = true
