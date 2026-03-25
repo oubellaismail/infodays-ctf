@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-api
+  namespace: ctfd
+  labels:
+    app: controller-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: controller-api
+  template:
+    metadata:
+      labels:
+        app: controller-api
+    spec:
+      serviceAccountName: ctf-controller
+      containers:
+      - name: controller-api
+        image: registry.digitalocean.com/infodays-registry/controller-api:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+          name: http
+        env:
+        - name: CTF_MASTER_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ctfd-secrets
+              key: CTF_MASTER_SECRET
+        - name: CONTROLLER_KEY
+          valueFrom:
+            secretKeyRef:
+              name: controller-key
+              key: CONTROLLER_KEY
+        resources:
+          limits:
+            cpu: "250m"
+            memory: "256Mi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller-api
+  namespace: ctfd
+  labels:
+    app: controller-api
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 5000
+    protocol: TCP
+    name: http
+  selector:
+    app: controller-api

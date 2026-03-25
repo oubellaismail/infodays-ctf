@@ -1,0 +1,31 @@
+# Challenge Manifest Schema
+# Each challenge is described by a YAML file in challenges/manifests/*.yaml
+# This file documents the valid structure.
+
+# Example manifest structure:
+# id: web-sqli
+# name: "SQL Injection"
+# category: web              # web | pwn | misc | crypto | forensics | reversing | osint
+# image: registry.digitalocean.com/infodays-registry/web-sqli:latest
+# port: 80                   # Container port
+# type: http                 # http (Ingress) | tcp (NGINX ConfigMap)
+# points: 100
+# memory_limit: 128Mi        # Optional - defaults to 128Mi
+
+# Field descriptions:
+# - id: Unique challenge identifier (lowercase, hyphenated, e.g., web-sqli)
+# - name: Human-readable challenge name
+# - category: Challenge type (service-based: web/pwn/misc; file-based: crypto/forensics/reversing/osint)
+# - image: Full DOCR image reference (registry.digitalocean.com/infodays-registry/...)
+# - port: Container port the challenge service listens on
+# - type: http = accessible via Ingress + HTTPS subdomain; tcp = accessible via nc command on assigned port
+# - points: Point value in CTFd
+# - memory_limit: Optional Kubernetes memory limit override (must not exceed 128Mi per constitution § V)
+
+# Service challenge categories (create K8s resources):
+# - web, pwn, misc
+
+# File challenge categories (skipped by bulk_spawn, no K8s pod):
+# - crypto, forensics, reversing, osint
+
+# For more details, see: specs/003-challenge-controller-pod-lifecycle/contracts/challenge-manifest-schema.yaml

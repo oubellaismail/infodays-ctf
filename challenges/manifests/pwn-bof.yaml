@@ -1,0 +1,7 @@
+id: pwn-bof
+name: "Buffer Overflow"
+category: pwn
+image: registry.digitalocean.com/infodays-registry/pwn-bof:latest
+port: 1337
+type: tcp
+points: 250

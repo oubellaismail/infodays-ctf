@@ -1,0 +1,223 @@
+openapi: "3.0.3"
+info:
+  title: CTF Challenge Controller API
+  version: "1.0.0"
+  description: |
+    Minimal API called exclusively by the CTFd plugin to activate/deactivate
+    challenge instances and query team status. All endpoints except /health
+    require the X-Controller-Key header.
+
+servers:
+  - url: http://controller-api.ctfd.svc.cluster.local
+    description: In-cluster (called from CTFd plugin). Service exposes port 80 → container port 5000.
+
+security:
+  - ControllerKey: []
+
+components:
+  securitySchemes:
+    ControllerKey:
+      type: apiKey
+      in: header
+      name: X-Controller-Key
+
+  schemas:
+    ActivateRequest:
+      type: object
+      required: [team_id, challenge_id]
+      properties:
+        team_id:
+          type: string
+          example: "3"
+        challenge_id:
+          type: string
+          example: "web-sqli"
+
+    ActivateResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [starting]
+        url:
+          type: string
+          description: |
+            HTTP URL for http-type challenges
+            (e.g., https://team-3-web-sqli.challenges.infodays.net)
+            or nc command for tcp-type challenges
+            (e.g., nc challenges.infodays.net 30001)
+          example: "https://team-3-web-sqli.challenges.infodays.net"
+
+    DeactivateRequest:
+      type: object
+      required: [team_id, challenge_id]
+      properties:
+        team_id:
+          type: string
+          example: "3"
+        challenge_id:
+          type: string
+          example: "web-sqli"
+
+    DeactivateResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [suspended]
+
+    ChallengeStatus:
+      type: object
+      properties:
+        challenge_id:
+          type: string
+          example: "web-sqli"
+        status:
+          type: string
+          enum: [running, suspended, fresh, unknown]
+        url:
+          type: string
+          nullable: true
+          description: Instance URL or nc command; null when not running
+          example: "https://team-3-web-sqli.challenges.infodays.net"
+        activated_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: UTC ISO 8601 timestamp when instance was last activated; null if never activated or cleared
+
+    StatusResponse:
+      type: object
+      properties:
+        challenges:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChallengeStatus'
+
+    ErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+          description: Error message. FastAPI uses "detail" (not "error") as the field name for all error responses.
+          example: "Max 4 active instances reached. Stop one to continue."
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok]
+
+paths:
+  /activate:
+    post:
+      summary: Activate a challenge instance for a team
+      description: |
+        Scales the team's challenge Deployment to replicas=1 and sets the
+        ctf/activated-at annotation. Enforces the 4-pod-per-team cap.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActivateRequest'
+      responses:
+        "200":
+          description: Instance is starting
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivateResponse'
+        "401":
+          description: Missing or invalid X-Controller-Key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Deployment not found for given team_id / challenge_id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "429":
+          description: Team already has 4 active instances
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                detail: "Max 4 active instances reached. Stop one to continue."
+
+  /deactivate:
+    post:
+      summary: Deactivate (suspend) a challenge instance for a team
+      description: |
+        Scales the team's challenge Deployment to replicas=0 and clears the
+        ctf/activated-at annotation. Idempotent — safe to call on an already
+        suspended Deployment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeactivateRequest'
+      responses:
+        "200":
+          description: Instance is suspended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeactivateResponse'
+        "401":
+          description: Missing or invalid X-Controller-Key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Deployment not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /status/{team_id}:
+    get:
+      summary: Get instance status for all challenges of a team
+      description: |
+        Returns status (running/suspended/fresh/unknown) and instance URL for
+        every challenge Deployment belonging to the team.
+      parameters:
+        - name: team_id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "3"
+      responses:
+        "200":
+          description: Team challenge status list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+        "401":
+          description: Missing or invalid X-Controller-Key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /health:
+    get:
+      summary: Liveness probe — no auth required
+      security: []
+      responses:
+        "200":
+          description: Controller is running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
