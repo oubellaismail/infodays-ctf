@@ -6,6 +6,11 @@ Auto-generated from all feature plans. Last updated: 2026-03-24
 - HCL (Terraform ≥1.5) for any Terraform additions; YAML (Kubernetes manifests); Bash (setup script); Python 3.11+ (import script) + `digitalocean` Terraform provider v2.x (already present); Kubernetes manifest files applied via `kubectl`; CTFd image `ctfd/ctfd:latest`; MySQL 8 image `mysql:8`; Redis 7 image `redis:7-alpine` (002-ctfd-platform-stack)
 - MySQL 8 StatefulSet with 10 Gi PVC on `do-block-storage` StorageClass; Redis ephemeral (no PVC) (002-ctfd-platform-stack)
 
+- Python 3.11+; `kubernetes` official Python client; `fastapi`; `uvicorn`; `httpx`; `pydantic` v2; `pytest` (003-challenge-controller-pod-lifecycle)
+- Controller API: FastAPI (not Flask/Django) — single uvicorn worker, stateless, K8s annotations as lifecycle state (003-challenge-controller-pod-lifecycle)
+- CTFd plugin: `CTFd/plugins/{name}/__init__.py` with `load(app: Flask)`, JS DOM injection from `assets/` Blueprint static folder (003-challenge-controller-pod-lifecycle)
+- Challenge manifests: YAML files in `challenges/manifests/`, schema at `contracts/challenge-manifest-schema.yaml` (003-challenge-controller-pod-lifecycle)
+
 - HCL (Terraform ≥1.5); YAML (Kubernetes manifests via TF providers) + Terraform `digitalocean` provider v2.x, `helm` provider v2.x, (001-cluster-network-foundation)
 
 ## Project Structure
@@ -94,6 +99,7 @@ terraform -chdir=infra/terraform destroy
 HCL (Terraform ≥1.5); YAML (Kubernetes manifests via TF providers): Follow standard conventions
 
 ## Recent Changes
+- 003-challenge-controller-pod-lifecycle: Added Python 3.11+ controller (FastAPI + kubernetes client + daemon); CTFd plugin (Flask Blueprint + JS DOM injection); challenge manifests YAML schema; teardown script
 - 002-ctfd-platform-stack: Added HCL (Terraform ≥1.5) for any Terraform additions; YAML (Kubernetes manifests); Bash (setup script); Python 3.11+ (import script) + `digitalocean` Terraform provider v2.x (already present); Kubernetes manifest files applied via `kubectl`; CTFd image `ctfd/ctfd:latest`; MySQL 8 image `mysql:8`; Redis 7 image `redis:7-alpine`
 
 - 001-cluster-network-foundation: Added HCL (Terraform ≥1.5); YAML (Kubernetes manifests via TF providers) + Terraform `digitalocean` provider v2.x, `helm` provider v2.x,

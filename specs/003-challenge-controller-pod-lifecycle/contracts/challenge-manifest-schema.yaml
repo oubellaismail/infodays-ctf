@@ -1,0 +1,97 @@
+# Challenge Manifest Schema
+# Each challenge is described by a YAML file in challenges/manifests/*.yaml
+# This schema defines the valid structure.
+
+$schema: "http://json-schema.org/draft-07/schema"
+title: ChallengeManifest
+description: Describes a single CTF challenge and its Kubernetes deployment parameters.
+
+type: object
+required: [id, name, category, image, port, type, points]
+additionalProperties: false
+
+properties:
+  id:
+    type: string
+    description: Unique challenge identifier. Used in K8s resource names and flag derivation.
+    pattern: "^[a-z][a-z0-9-]*[a-z0-9]$"
+    examples:
+      - "web-sqli"
+      - "pwn-bof"
+      - "misc-riddle"
+
+  name:
+    type: string
+    description: Human-readable challenge name shown in CTFd.
+    examples:
+      - "SQL Injection"
+      - "Buffer Overflow"
+
+  category:
+    type: string
+    description: |
+      Challenge category. Service challenges (web, pwn, misc) receive a pod per team.
+      File challenges (crypto, forensics, reversing, osint) are skipped by bulk_spawn.
+    enum:
+      - web
+      - pwn
+      - misc
+      - crypto
+      - forensics
+      - reversing
+      - osint
+
+  image:
+    type: string
+    description: |
+      Full DOCR image reference. Must be in the infodays-registry.
+    pattern: "^registry\\.digitalocean\\.com/infodays-registry/.+:.+$"
+    examples:
+      - "registry.digitalocean.com/infodays-registry/web-sqli:latest"
+
+  port:
+    type: integer
+    description: Container port the challenge service listens on.
+    minimum: 1
+    maximum: 65535
+    examples:
+      - 80
+      - 1337
+      - 4444
+
+  type:
+    type: string
+    description: |
+      Routing type.
+      - http: creates an Ingress rule → accessible via HTTPS subdomain
+      - tcp: adds an entry to the NGINX TCP ConfigMap → accessible via nc on assigned port
+    enum:
+      - http
+      - tcp
+
+  points:
+    type: integer
+    description: Challenge point value in CTFd.
+    minimum: 1
+    examples:
+      - 100
+      - 250
+      - 500
+
+  memory_limit:
+    type: string
+    description: |
+      Optional memory limit override for the challenge pod.
+      If omitted, the LimitRange default (128Mi) applies.
+      Must not exceed 128Mi per constitution § V.
+    pattern: "^[0-9]+(Mi|Gi)$"
+    examples:
+      - "64Mi"
+      - "128Mi"
+
+# Constraints derived from constitution and research:
+# - Maximum 5 challenges per category (constitution § Challenge Categories)
+# - Service challenge categories only: web, pwn, misc
+# - File challenge categories (no pod): crypto, forensics, reversing, osint
+# - memory_limit MUST NOT exceed 128Mi (constitution § V Resource Table)
+# - image MUST be in registry.digitalocean.com/infodays-registry (constitution § IV)

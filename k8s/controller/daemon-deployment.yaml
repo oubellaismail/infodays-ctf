@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-daemon
+  namespace: ctfd
+  labels:
+    app: controller-daemon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: controller-daemon
+  template:
+    metadata:
+      labels:
+        app: controller-daemon
+    spec:
+      serviceAccountName: ctf-controller
+      containers:
+      - name: controller-daemon
+        image: registry.digitalocean.com/infodays-registry/controller-daemon:latest
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: CTF_MASTER_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ctfd-secrets
+              key: CTF_MASTER_SECRET
+        resources:
+          limits:
+            cpu: "100m"
+            memory: "128Mi"
+          requests:
+            cpu: "50m"
+            memory: "64Mi"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
