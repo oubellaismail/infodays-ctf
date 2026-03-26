@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ctf-daemon
+  namespace: ctfd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ctf-daemon
+  namespace: challenges
+rules:
+  # Deployments: get/list/watch (polling), update/patch (scale replicas to 0)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  # Pods: get/list/watch (check pod status for active instance counting)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ctf-daemon
+  namespace: challenges
+subjects:
+  - kind: ServiceAccount
+    name: ctf-daemon
+    namespace: ctfd
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ctf-daemon

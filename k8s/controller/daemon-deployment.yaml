@@ -15,7 +15,7 @@ spec:
       labels:
         app: controller-daemon
     spec:
-      serviceAccountName: ctf-controller
+      serviceAccountName: ctf-daemon
       imagePullSecrets:
       - name: docr-pull-secret
       containers:

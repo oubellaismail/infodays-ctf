@@ -193,7 +193,11 @@ resource "kubernetes_network_policy" "allow_ctfd_egress_internet" {
   }
 
   spec {
-    pod_selector {}
+    pod_selector {
+      match_labels = {
+        app = "controller-api"
+      }
+    }
 
     egress {
       to {
