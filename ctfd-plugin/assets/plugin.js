@@ -2,20 +2,26 @@
  * CTFd Controller Plugin - client-side challenge instance management
  *
  * Config injected by __init__.py (after_request) as window.CTF_CONTROLLER:
- *   { team_id, url, key }
+ *   { team_id, is_admin }
  *
- * Reads challenge ID and category from the open challenge modal via CTFd's
- * DOM structure. Hooks in via MutationObserver watching for the challenge window.
+ * All controller API calls go through the CTFd proxy (/controller-proxy/...)
+ * so no cluster-internal URLs or API keys are exposed to the browser.
  */
 
 (function () {
   var cfg = window.CTF_CONTROLLER;
   if (!cfg) return;
-  if (!cfg.team_id || cfg.team_id === "null" || cfg.team_id === null) return;
 
-  var TEAM_ID = String(cfg.team_id);
-  var CONTROLLER_URL = cfg.url;
-  var CONTROLLER_KEY = cfg.key;
+  var IS_ADMIN = cfg.is_admin === true;
+  // Admins have no team — default to team 1 for testing; normal users must have a team
+  var TEAM_ID;
+  if (cfg.team_id && cfg.team_id !== null) {
+    TEAM_ID = String(cfg.team_id);
+  } else if (IS_ADMIN) {
+    TEAM_ID = "1";
+  } else {
+    return; // not logged in or no team
+  }
 
   var SERVICE_CATEGORIES = ["web", "pwn", "misc"];
 
@@ -26,16 +32,21 @@
 
   // ─── CTFd API helpers ───────────────────────────────────────────────────────
 
-  function ctfdFetch(path) {
-    return fetch(path, {
-      headers: { "Content-Type": "application/json", "X-CSRFToken": getCsrfToken() },
-      credentials: "same-origin",
-    });
+  function getCsrfToken() {
+    // CTFd 3.8.2 stores CSRF nonce in window.init.csrfNonce
+    return (window.init && window.init.csrfNonce) ? window.init.csrfNonce : "";
   }
 
-  function getCsrfToken() {
-    var meta = document.querySelector("meta[name='csrf-token']");
-    return meta ? meta.content : "";
+  function ctfdFetch(path, opts) {
+    var defaults = {
+      headers: { "Content-Type": "application/json", "CSRF-Token": getCsrfToken() },
+      credentials: "same-origin",
+    };
+    if (opts) {
+      defaults.method = opts.method || "GET";
+      if (opts.body) defaults.body = opts.body;
+    }
+    return fetch(path, defaults);
   }
 
   // Fetch challenge details (id, category) from CTFd API
@@ -50,13 +61,11 @@
     }
   }
 
-  // ─── Controller API helpers ─────────────────────────────────────────────────
+  // ─── Controller proxy helpers (all requests go through CTFd) ──────────────
 
   async function fetchStatus() {
     try {
-      var resp = await fetch(CONTROLLER_URL + "/status/" + TEAM_ID, {
-        headers: { "X-Controller-Key": CONTROLLER_KEY },
-      });
+      var resp = await ctfdFetch("/controller-proxy/status/" + TEAM_ID);
       if (!resp.ok) throw new Error("HTTP " + resp.status);
       var data = await resp.json();
       return (data.challenges || []).find(function (c) {
@@ -76,16 +85,15 @@
 
     var container = document.createElement("div");
     container.id = "ctf-controller-ui";
-    container.style.marginBottom = "10px";
+    container.style.cssText = "margin-bottom:12px;padding:10px;border:1px solid #444;border-radius:6px;background:rgba(255,255,255,0.05);";
 
     // Insert before challenge description in the modal
     var descEl =
-      document.querySelector(".challenge-container .challenge-desc") ||
-      document.querySelector("#challenge-id-description") ||
+      document.querySelector(".challenge-desc") ||
       document.querySelector(".modal-body");
 
     if (descEl) {
-      descEl.insertBefore(container, descEl.firstChild);
+      descEl.parentNode.insertBefore(container, descEl);
     }
     return container;
   }
@@ -106,20 +114,16 @@
     container.innerHTML = "";
 
     var badge = document.createElement("span");
-    badge.style.marginRight = "8px";
-    badge.style.padding = "2px 8px";
-    badge.style.borderRadius = "4px";
-    badge.style.fontSize = "0.8em";
+    badge.style.cssText = "margin-right:8px;padding:2px 8px;border-radius:4px;font-size:0.8em;color:#fff;";
 
     var btn = document.createElement("button");
     btn.style.marginRight = "6px";
     btn.className = "btn btn-sm";
 
     if (status === "fresh" || status === "suspended") {
-      badge.textContent = status === "fresh" ? "Fresh" : "Suspended";
+      badge.textContent = status === "fresh" ? "Not Started" : "Stopped";
       badge.style.background = "#6c757d";
-      badge.style.color = "#fff";
-      btn.textContent = "▶ Start Instance";
+      btn.textContent = "\u25B6 Start Instance";
       btn.className += " btn-primary";
       btn.onclick = handleStart;
       container.appendChild(badge);
@@ -127,8 +131,7 @@
     } else if (status === "running") {
       badge.textContent = "Running";
       badge.style.background = "#28a745";
-      badge.style.color = "#fff";
-      btn.textContent = "⏹ Stop Instance";
+      btn.textContent = "\u23F9 Stop Instance";
       btn.className += " btn-danger";
       btn.onclick = handleStop;
       container.appendChild(badge);
@@ -140,12 +143,8 @@
         urlLink.target = "_blank";
         urlLink.rel = "noopener noreferrer";
         urlLink.textContent = challenge.url;
+        urlLink.style.marginLeft = "8px";
         container.appendChild(urlLink);
-
-        var note = document.createElement("small");
-        note.textContent = " (starting, may take ~30 seconds if just activated)";
-        note.style.color = "#6c757d";
-        container.appendChild(note);
       }
     } else {
       renderUnknown(container);
@@ -159,8 +158,8 @@
     container.innerHTML = "";
 
     var badge = document.createElement("span");
-    badge.textContent = "Unknown";
-    badge.style.cssText = "margin-right:8px;padding:2px 8px;border-radius:4px;font-size:0.8em;background:#6c757d;color:#fff;";
+    badge.textContent = "Error";
+    badge.style.cssText = "margin-right:8px;padding:2px 8px;border-radius:4px;font-size:0.8em;background:#dc3545;color:#fff;";
     container.appendChild(badge);
 
     var btn = document.createElement("button");
@@ -173,6 +172,7 @@
     var retryLink = document.createElement("a");
     retryLink.href = "#";
     retryLink.textContent = "Retry";
+    retryLink.style.marginLeft = "4px";
     retryLink.onclick = function (e) {
       e.preventDefault();
       updateUI();
@@ -185,7 +185,7 @@
     if (!btn) return;
     btn.disabled = loading;
     if (loading) {
-      btn.textContent = currentStatus === "running" ? "Stopping…" : "Starting…";
+      btn.textContent = currentStatus === "running" ? "Stopping\u2026" : "Starting\u2026";
     }
   }
 
@@ -194,9 +194,8 @@
   async function handleStart() {
     setButtonLoading(true);
     try {
-      var resp = await fetch(CONTROLLER_URL + "/activate", {
+      var resp = await ctfdFetch("/controller-proxy/activate", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Controller-Key": CONTROLLER_KEY },
         body: JSON.stringify({ team_id: TEAM_ID, challenge_id: currentChallengeId }),
       });
       var data = await resp.json();
@@ -216,7 +215,6 @@
         challenge_id: currentChallengeId,
         status: "running",
         url: data.url,
-        activated_at: new Date().toISOString(),
       });
       setButtonLoading(false);
     } catch (err) {
@@ -229,9 +227,8 @@
   async function handleStop() {
     setButtonLoading(true);
     try {
-      var resp = await fetch(CONTROLLER_URL + "/deactivate", {
+      var resp = await ctfdFetch("/controller-proxy/deactivate", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Controller-Key": CONTROLLER_KEY },
         body: JSON.stringify({ team_id: TEAM_ID, challenge_id: currentChallengeId }),
       });
 
@@ -245,7 +242,6 @@
         challenge_id: currentChallengeId,
         status: "suspended",
         url: null,
-        activated_at: null,
       });
       setButtonLoading(false);
     } catch (err) {
@@ -272,96 +268,98 @@
     refreshTimer = null;
   }
 
-  // ─── Challenge modal hooking ─────────────────────────────────────────────────
+  // ─── Challenge modal hooking (CTFd 3.8.2 — Bootstrap 5 modal events) ───────
 
-  async function onChallengeOpen(challengeId) {
+  var openingId = null;
+
+  async function onChallengeOpen(numericId) {
+    numericId = String(numericId);
+    if (openingId === numericId) return;
+    openingId = numericId;
+
     stopPolling();
     currentChallengeId = null;
     currentStatus = null;
 
-    // Remove any existing UI container
     var old = document.getElementById("ctf-controller-ui");
     if (old) old.remove();
 
-    // Fetch challenge category from CTFd API
-    var info = await fetchChallengeInfo(challengeId);
-    if (!info) return;
+    var info = await fetchChallengeInfo(numericId);
+    if (openingId !== numericId) return;
+    openingId = null;
+    if (!info) {
+      console.warn("[ctf-controller] fetchChallengeInfo returned null for", numericId);
+      return;
+    }
 
     var category = (info.category || "").toLowerCase();
-    if (!SERVICE_CATEGORIES.includes(category)) return;
+    if (!SERVICE_CATEGORIES.includes(category)) {
+      console.log("[ctf-controller] skipping non-service category:", category);
+      return;
+    }
 
-    currentChallengeId = info.id ? String(info.id) : null;
-
-    // CTFd challenge IDs in manifests use the challenge name slug, not numeric ID.
-    // The manifest challenge_id (e.g., "web-sqli") must match what bulk_spawn used.
-    // Use the challenge name to derive manifest ID: lowercase hyphenated.
-    // Fallback: use numeric ID as string if no name-based slug is available.
-    // The status endpoint matches on challenge label set by bulk_spawn.
-    // We need the manifest ID, not the CTFd numeric ID.
-    // Use CTFd challenge name to look up: matching is done server-side via label selector.
-    // Pass the CTFd numeric ID and let the status response match by label.
-    // Note: bulk_spawn sets label challenge={manifest_id}, e.g., "web-sqli".
-    // The manifest_id is the id field from challenges/manifests/*.yaml.
-    // We store it in the description or use a convention: category + "-" + name slug.
-    // For now, we read the manifest ID from the challenge type field if CTFd exposes it.
-    // Best approach: store manifest_id in CTFd challenge description as hidden metadata,
-    // or use a consistent naming convention. For this event, we use the challenge name
-    // converted to a slug as the manifest ID.
     if (info.name) {
       currentChallengeId = info.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
     }
-
     if (!currentChallengeId) return;
 
+    console.log("[ctf-controller] challenge opened:", currentChallengeId);
     updateUI();
     startPolling();
   }
 
-  function watchChallengeModal() {
-    // CTFd challenge modals are created dynamically. Watch for:
-    // - CTFd 3.x: Bootstrap modal #challenge-window shown
-    // - CTFd 3.5+: Modal visibility changes on #challenge-window or similar
-    var observer = new MutationObserver(function (mutations) {
-      for (var i = 0; i < mutations.length; i++) {
-        var mutation = mutations[i];
+  function onModalClose() {
+    stopPolling();
+    openingId = null;
+    currentChallengeId = null;
+    var ui = document.getElementById("ctf-controller-ui");
+    if (ui) ui.remove();
+  }
 
-        // Watch for class changes (Bootstrap adding 'show' to modal)
-        if (mutation.type === "attributes" && mutation.attributeName === "class") {
-          var el = mutation.target;
-          if (el.id === "challenge-window" || el.classList.contains("modal")) {
-            if (el.classList.contains("show")) {
-              // Modal opened — find challenge ID
-              var cidEl =
-                el.querySelector("[data-challenge-id]") ||
-                el.querySelector("[data-cid]") ||
-                el.querySelector("form[data-challenge-id]");
-              var cid = cidEl ? (cidEl.dataset.challengeId || cidEl.dataset.cid) : null;
-              if (cid) onChallengeOpen(cid);
-            } else {
-              // Modal closed
-              stopPolling();
-            }
-          }
-        }
+  function watchChallengeModal() {
+    // Use Bootstrap 5 native modal events on #challenge-window.
+    // "shown.bs.modal" fires after the modal is fully visible and x-html content is rendered.
+    // "hidden.bs.modal" fires when the modal closes.
+    // These events bubble, so we listen on document for safety.
+
+    document.addEventListener("shown.bs.modal", function (e) {
+      var modal = e.target;
+      if (modal.id !== "challenge-window") return;
+
+      console.log("[ctf-controller] modal shown event fired");
+
+      // Find challenge ID from the hidden input rendered by x-html
+      var cidEl = modal.querySelector("#challenge-id");
+      var cid = cidEl ? cidEl.value : null;
+
+      if (!cid) {
+        // Fallback: parse from URL hash (#ChallengeName-ID)
+        var hash = decodeURIComponent(window.location.hash.slice(1));
+        var m = hash.match(/-(\d+)$/);
+        cid = m ? m[1] : null;
+      }
+
+      if (cid) {
+        console.log("[ctf-controller] detected challenge id:", cid);
+        onChallengeOpen(cid);
       }
     });
 
-    observer.observe(document.body, { attributes: true, subtree: true, attributeFilter: ["class"] });
+    document.addEventListener("hidden.bs.modal", function (e) {
+      if (e.target.id === "challenge-window") {
+        onModalClose();
+      }
+    });
 
-    // Also hook into CTFd's JS event system if available
-    if (window.CTFd && window.CTFd.ui) {
-      // CTFd 3.5+ event hooks (if available)
-      try {
-        document.addEventListener("challenge-load", function (e) {
-          if (e.detail && e.detail.id) onChallengeOpen(e.detail.id);
-        });
-      } catch (e) {}
-    }
+    // Handle direct deep-link: page loaded with hash already set.
+    // ChallengeBoard.init() in challenges.js auto-opens the modal if hash exists,
+    // which will fire shown.bs.modal — no extra handling needed.
   }
 
   // ─── Bootstrap ──────────────────────────────────────────────────────────────
 
   function init() {
+    console.log("[ctf-controller] Plugin loaded, team_id=" + TEAM_ID + ", admin=" + IS_ADMIN);
     watchChallengeModal();
   }
 

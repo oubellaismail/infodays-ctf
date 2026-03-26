@@ -37,7 +37,7 @@ pods live in the `challenges` namespace.
 |-----------|------|--------|
 | **I. Flag Integrity** | Flags MUST use `HMAC-SHA256(CTF_MASTER_SECRET, "{team_id}:{challenge_id}")[:32]`; secret from K8s Secret `ctfd-secrets` only; never logged or baked into images | PASS — `flag.py` derives flags at spawn time; stored in K8s Secret per team/challenge; `FLAG` env var injected at runtime |
 | **I. Flag Integrity** | `CTF_MASTER_SECRET` MUST NOT appear in any committed file | PASS — read from env var sourced from K8s Secret; controller fails to start if unset |
-| **II. Security-First Pod Isolation** | All challenge pods MUST run as uid=1000, no root, no package managers in final layers | PASS — enforced by PodSecurityStandard `restricted` on `challenges` namespace (Phase 1 prerequisite); bulk_spawn.py does not set securityContext overrides — namespace admission enforces it |
+| **II. Security-First Pod Isolation** | All challenge pods MUST run as uid=1000, no root, no package managers in final layers | PASS — enforced by PodSecurityStandard `restricted` on `challenges` namespace; bulk_spawn.py sets explicit securityContext (runAsNonRoot, runAsUser=1000, drop ALL caps, seccomp RuntimeDefault) to pass admission |
 | **III. Pod Lifecycle Discipline** | Pre-spawn at `replicas=0`; max 4 simultaneous active pods per team; 60-min lifetime; daemon every 5 min; NEVER delete Deployments | PASS — all constraints directly implemented |
 | **IV. DigitalOcean-Exclusive** | Python k8s client, FastAPI, DOCR — no external cloud services | PASS — no external cloud dependencies; controller image pushed to DOCR |
 | **V. Resource & Cost Discipline** | Controller API: 0.25 CPU / 256 Mi RAM; Daemon: 0.1 CPU / 128 Mi RAM | PASS — resource limits in K8s manifests match constitution table |
@@ -78,9 +78,9 @@ controller/
 └── daemon.Dockerfile    # Daemon image
 
 ctfd-plugin/
-├── __init__.py          # CTFd plugin entry point — load(app)
+├── __init__.py          # CTFd plugin: register_script(), /controller-proxy/* proxy routes
 └── assets/
-    └── plugin.js        # Start/Stop buttons + status polling (fetch every 15 s)
+    └── plugin.js        # Bootstrap 5 modal events, Start/Stop buttons, status polling (15s)
 
 challenges/
 └── manifests/
@@ -88,13 +88,16 @@ challenges/
     └── *.yaml           # One YAML manifest per challenge
 
 k8s/
-└── controller/
-    ├── api-deployment.yaml    # Controller FastAPI Deployment + Service
-    ├── daemon-deployment.yaml # Daemon Deployment
-    └── rbac.yaml              # ServiceAccount, Roles, and RoleBindings for ctf-controller
+├── controller/
+│   ├── api-deployment.yaml    # Controller FastAPI Deployment + Service (mounts challenge-manifests ConfigMap)
+│   ├── daemon-deployment.yaml # Daemon Deployment
+│   └── rbac.yaml              # ServiceAccount, Roles, and RoleBindings for ctf-controller
+└── ctfd/
+    └── networkpolicy.yaml     # Includes ctfd↔controller-api egress/ingress policies
 
 scripts/
-└── teardown-challenges.sh    # Deletes all managed-by=ctf-controller resources (with confirmation)
+├── deploy-challenge.sh        # One-command: CTFd entry → ConfigMap → restart → bulk_spawn → flags
+└── teardown-challenges.sh     # Deletes all managed-by=ctf-controller resources (with confirmation)
 
 tests/
 ├── unit/

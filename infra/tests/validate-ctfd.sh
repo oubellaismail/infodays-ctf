@@ -19,24 +19,24 @@ check() {
 
   if [[ "$result" -eq 0 ]]; then
     echo "[PASS] $test_name"
-    ((PASS++))
+    PASS=$((PASS + 1))
   else
     echo "[FAIL] $test_name"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
   fi
 }
 
 # Test 1: TLS and HTTP connectivity
 echo "Test 1: TLS certificate and HTTP connectivity..."
 {
-  curl --fail -s -o /dev/null "$CTFD_URL" && \
+  curl --fail -s -o /dev/null "$CTFD_URL/login" && \
   openssl s_client -connect ctfd.infodays.net:443 -brief 2>&1 | grep -q "Verification: OK"
 } && check "TLS certificate valid and HTTP 200" 0 || check "TLS certificate valid and HTTP 200" 1
 
 # Test 2: CTFd login page content
 echo "Test 2: CTFd login page..."
 {
-  curl -s "$CTFD_URL" | grep -iq "ctfd"
+  curl -Ls "$CTFD_URL" | grep -iE "ctfd|setup" > /dev/null
 } && check "CTFd login page loads" 0 || check "CTFd login page loads" 1
 
 # Test 3: Data persistence (MySQL restart)

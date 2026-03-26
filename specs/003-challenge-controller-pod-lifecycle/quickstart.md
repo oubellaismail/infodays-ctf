@@ -34,53 +34,30 @@ pip install -r requirements.txt
 
 ## Pre-Event Workflow
 
-### Step 1 — Verify challenge manifests
+### Option A — One-command deployment (recommended)
 
 ```bash
-# Manifests live in challenges/manifests/*.yaml
-# Each file must conform to contracts/challenge-manifest-schema.yaml
-ls challenges/manifests/
+# deploy-challenge.sh automates all steps: CTFd entry, ConfigMap, controller restart,
+# bulk_spawn, and flag import. Run once per challenge manifest.
+
+export CTFD_URL=https://ctfd.infodays.net
+export CTFD_ADMIN_TOKEN=$CTFD_ADMIN_TOKEN
+export CTF_MASTER_SECRET=$CTF_MASTER_SECRET
+
+bash scripts/deploy-challenge.sh challenges/manifests/web-sqli.yaml
+bash scripts/deploy-challenge.sh challenges/manifests/pwn-bof.yaml
+bash scripts/deploy-challenge.sh challenges/manifests/misc-riddle.yaml
 ```
 
-### Step 2 — Bulk pre-spawn all resources
+### Option B — Manual step-by-step
 
-```bash
-# Reads teams from CTFd admin API + manifests from challenges/manifests/
-# Creates Deployments, Secrets, Services, Ingresses/TCP entries
-# Skips file-based categories (crypto, forensics, reversing, osint)
-# Idempotent — safe to re-run
-
-CTFD_URL=https://ctfd.infodays.net \
-CTFD_ADMIN_TOKEN=$CTFD_ADMIN_TOKEN \
-CTF_MASTER_SECRET=$CTF_MASTER_SECRET \
-python controller/bulk_spawn.py
-
-# Expected output:
-# Spawned team-1-web-sqli
-# Spawned team-1-pwn-bof
-# Skipped (exists): team-1-web-sqli   ← on re-run
-```
-
-### Step 3 — Import derived flags into CTFd
-
-```bash
-# Derives HMAC-SHA256 flag for every (team, service-challenge) pair
-# Posts each flag to CTFd admin API
-# Run AFTER bulk_spawn.py, BEFORE event start
-
-CTFD_URL=https://ctfd.infodays.net \
-CTFD_ADMIN_TOKEN=$CTFD_ADMIN_TOKEN \
-CTF_MASTER_SECRET=$CTF_MASTER_SECRET \
-python controller/import_flags.py
-```
-
-### Step 4 — Deploy controller API and daemon
+### Step 1 — Deploy controller API and daemon
 
 ```bash
 # Apply secrets first (always separate from other manifests)
 kubectl apply -f k8s/controller/secrets.local.yaml   # contains CONTROLLER_KEY
 
-# Deploy controller FastAPI
+# Deploy controller FastAPI (mounts challenge-manifests ConfigMap)
 kubectl apply -f k8s/controller/api-deployment.yaml
 
 # Deploy lifetime daemon
@@ -91,6 +68,53 @@ kubectl get pods -n ctfd
 # NAME                          READY   STATUS    RESTARTS   AGE
 # controller-api-xxx            1/1     Running   0          30s
 # controller-daemon-xxx         1/1     Running   0          30s
+```
+
+### Step 2 — Verify challenge manifests
+
+```bash
+# Manifests live in challenges/manifests/*.yaml
+# Each file must conform to contracts/challenge-manifest-schema.yaml
+# IMPORTANT: web challenges use port 8080, pwn uses 1337, misc uses 4444
+ls challenges/manifests/
+```
+
+### Step 3 — Update challenge-manifests ConfigMap
+
+```bash
+# The controller API loads manifests from a ConfigMap mounted at /app/challenges/manifests
+# Update it whenever manifests change, then restart the controller
+kubectl create configmap challenge-manifests \
+  --from-file=challenges/manifests/ -n ctfd --dry-run=client -o yaml | kubectl apply -f -
+kubectl rollout restart deployment/controller-api -n ctfd
+```
+
+### Step 4 — Bulk pre-spawn all resources
+
+```bash
+# Reads teams from CTFd admin API + manifests from challenges/manifests/
+# Creates Deployments (replicas=0), Secrets, Services, Ingresses/TCP entries
+# Includes PodSecurity-compliant security context (restricted:latest)
+# Idempotent — safe to re-run
+
+# Run inside the controller pod (has K8s credentials + manifests):
+CONTROLLER_POD=$(kubectl get pods -n ctfd -l app=controller-api \
+  --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+
+kubectl exec -n ctfd $CONTROLLER_POD -- \
+  env CTFD_ADMIN_TOKEN=$CTFD_ADMIN_TOKEN \
+  python3 /app/bulk_spawn.py --ctfd-url https://ctfd.infodays.net --token $CTFD_ADMIN_TOKEN
+```
+
+### Step 5 — Import derived flags into CTFd
+
+```bash
+# Derives HMAC-SHA256 flag for every (team, service-challenge) pair
+# Posts each flag to CTFd admin API — idempotent
+
+kubectl exec -n ctfd $CONTROLLER_POD -- \
+  env CTFD_ADMIN_TOKEN=$CTFD_ADMIN_TOKEN \
+  python3 /app/import_flags.py --ctfd-url https://ctfd.infodays.net
 ```
 
 ---
@@ -211,3 +235,31 @@ bash scripts/teardown-challenges.sh
 | `CONTROLLER_KEY` | K8s Secret `controller-key` | Shared secret for API auth |
 | `CTFD_URL` | Deployment env or shell | CTFd base URL for admin API calls |
 | `CTFD_ADMIN_TOKEN` | Shell / CI secret | CTFd admin API token |
+
+## Network Policies Required
+
+The `challenges` namespace uses default-deny. These policies must be in place:
+
+| Policy | Purpose |
+|--------|---------|
+| `default-deny-all` | Blocks all ingress/egress by default (Terraform-managed) |
+| `allow-ingress-to-challenges` | ingress-nginx → challenge pods on ports 8080, 1337, 4444 |
+| `allow-challenges-egress-dns` | challenge pods → kube-system DNS (port 53 UDP/TCP) |
+
+The `ctfd` namespace also requires policies for controller communication:
+
+| Policy | Purpose |
+|--------|---------|
+| `allow-ctfd-egress-controller` | CTFd pods → controller-api on port 5000 |
+| `allow-ctfd-to-controller-ingress` | controller-api accepts from CTFd pods on port 5000 |
+
+## CTFd Plugin Architecture
+
+The CTFd plugin (`ctfd-plugin/`) provides the Start/Stop UI in challenge modals:
+
+- **Script injection**: `register_script()` from `CTFd.utils.plugins` — loads `config.js` (per-user config) and `plugin.js` (UI logic)
+- **Controller proxy**: Browser calls `/controller-proxy/*` on CTFd, which proxies to `http://controller-api.ctfd.svc.cluster.local` (never exposed to browser)
+- **Auth**: Uses `CTFd.utils.user.get_current_user()` and `CTFd.utils.decorators.authed()`
+- **CSRF**: Reads `window.init.csrfNonce`, sends as `CSRF-Token` header
+- **Modal detection**: Listens for Bootstrap 5 `shown.bs.modal` event on `#challenge-window`
+- **Challenge ID mapping**: Derives slug from CTFd challenge name: `name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")`
