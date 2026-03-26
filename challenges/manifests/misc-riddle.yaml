@@ -1,7 +1,7 @@
 id: misc-riddle
 name: "TCP Riddle"
 category: misc
-image: registry.digitalocean.com/infodays-registry/misc-riddle:latest
+image: registry.digitalocean.com/infodays-registry/base:misc
 port: 4444
 type: tcp
 points: 150

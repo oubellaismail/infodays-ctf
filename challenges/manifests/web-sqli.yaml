@@ -1,7 +1,7 @@
 id: web-sqli
 name: "SQL Injection"
 category: web
-image: registry.digitalocean.com/infodays-registry/web-sqli:latest
-port: 80
+image: registry.digitalocean.com/infodays-registry/base:web
+port: 8080
 type: http
 points: 100

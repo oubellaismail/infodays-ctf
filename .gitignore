@@ -57,3 +57,6 @@ data/teams.csv
 __pycache__/
 *.pyc
 *.pyo
+
+# CTFd generated credentials
+.ctfd.env

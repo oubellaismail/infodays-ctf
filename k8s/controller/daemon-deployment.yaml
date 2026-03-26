@@ -16,11 +16,17 @@ spec:
         app: controller-daemon
     spec:
       serviceAccountName: ctf-controller
+      imagePullSecrets:
+      - name: docr-pull-secret
       containers:
       - name: controller-daemon
-        image: registry.digitalocean.com/infodays-registry/controller-daemon:latest
+        image: registry.digitalocean.com/infodays-registry/base:controller-daemon
         imagePullPolicy: IfNotPresent
         env:
+        - name: KUBERNETES_SERVICE_HOST
+          value: "9f99eeed-db17-4c09-9bdf-ccb948b362c2.k8s.ondigitalocean.com"
+        - name: KUBERNETES_SERVICE_PORT
+          value: "443"
         - name: CTF_MASTER_SECRET
           valueFrom:
             secretKeyRef:

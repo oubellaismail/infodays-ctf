@@ -2,23 +2,111 @@
 CTFd Controller Plugin - manages team challenge instances.
 
 Provides UI for starting/stopping challenge pods and displays their status.
-Injects config globals via after_request; plugin.js hooks into CTFd's challenge events.
+Proxies browser requests to the cluster-internal controller API.
+Uses CTFd's register_script() for reliable script injection.
 """
 
-from flask import Blueprint, request as flask_request
-from flask_login import current_user
+from flask import Blueprint, request as flask_request, jsonify, Response, make_response
+import urllib.request
+import urllib.error
+import json
 
 
 def load(app):
     """Load the CTFd plugin."""
-    # Register Flask blueprint for static asset serving
+    from CTFd.utils.plugins import register_script
+
     blueprint = Blueprint(
         "controller_plugin",
         __name__,
         static_folder="assets",
         static_url_path="/plugins/controller-plugin/assets",
     )
+
+    # ── Dynamic config endpoint (serves per-user JS config) ──────────────────
+
+    @blueprint.route("/controller-plugin/config.js")
+    def controller_config_js():
+        """Serve per-user CTF_CONTROLLER config as JavaScript."""
+        team_id = "null"
+        is_admin = "false"
+        try:
+            from CTFd.utils.user import get_current_user
+            user = get_current_user()
+            if user:
+                tid = getattr(user, "team_id", None)
+                team_id = str(tid) if tid is not None else "null"
+                if getattr(user, "type", "") == "admin":
+                    is_admin = "true"
+        except Exception:
+            pass
+
+        js = "window.CTF_CONTROLLER = {{ team_id: {}, is_admin: {} }};".format(
+            team_id, is_admin
+        )
+        resp = make_response(js)
+        resp.headers["Content-Type"] = "application/javascript"
+        resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        return resp
+
+    # ── Proxy routes: browser → CTFd → controller-api (cluster-internal) ─────
+
+    def _get_controller_config():
+        from CTFd.models import Configs
+        url_cfg = Configs.query.filter_by(key="CONTROLLER_URL").first()
+        key_cfg = Configs.query.filter_by(key="X_CONTROLLER_KEY").first()
+        return (
+            url_cfg.value if url_cfg else "http://controller-api.ctfd.svc.cluster.local",
+            key_cfg.value if key_cfg else "",
+        )
+
+    def _proxy(method, path, data=None):
+        base_url, api_key = _get_controller_config()
+        url = base_url.rstrip("/") + path
+        headers = {"X-Controller-Key": api_key, "Content-Type": "application/json"}
+        body = json.dumps(data).encode() if data else None
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
+        try:
+            resp = urllib.request.urlopen(req, timeout=10)
+            return Response(resp.read(), status=resp.status, content_type="application/json")
+        except urllib.error.HTTPError as e:
+            return Response(e.read(), status=e.code, content_type="application/json")
+        except Exception as e:
+            return jsonify({"error": str(e)}), 502
+
+    def _check_authed():
+        try:
+            from CTFd.utils.decorators import authed
+            return authed()
+        except Exception:
+            return False
+
+    @blueprint.route("/controller-proxy/status/<team_id>")
+    def proxy_status(team_id):
+        if not _check_authed():
+            return jsonify({"error": "unauthorized"}), 401
+        return _proxy("GET", "/status/" + team_id)
+
+    @blueprint.route("/controller-proxy/activate", methods=["POST"])
+    def proxy_activate():
+        if not _check_authed():
+            return jsonify({"error": "unauthorized"}), 401
+        data = flask_request.get_json(silent=True) or {}
+        return _proxy("POST", "/activate", data)
+
+    @blueprint.route("/controller-proxy/deactivate", methods=["POST"])
+    def proxy_deactivate():
+        if not _check_authed():
+            return jsonify({"error": "unauthorized"}), 401
+        data = flask_request.get_json(silent=True) or {}
+        return _proxy("POST", "/deactivate", data)
+
     app.register_blueprint(blueprint)
+
+    # ── Register scripts via CTFd's native mechanism ({{ Plugins.scripts }}) ──
+    # config.js serves dynamic per-user config; plugin.js has the UI logic.
+    register_script("/controller-plugin/config.js")
+    register_script("/plugins/controller-plugin/assets/plugin.js")
 
     # Initialize default config values on first load
     with app.app_context():
@@ -33,49 +121,3 @@ def load(app):
         if not Configs.query.filter_by(key="X_CONTROLLER_KEY").first():
             db.session.add(Configs(key="X_CONTROLLER_KEY", value="CHANGE_ME"))
             db.session.commit()
-
-    @app.after_request
-    def inject_controller_script(response):
-        """Inject controller config and plugin script into every HTML page."""
-        if not response.content_type.startswith("text/html"):
-            return response
-
-        # Skip API and static routes
-        if flask_request.path.startswith(("/api/", "/themes/", "/plugins/")):
-            return response
-
-        # Read config from DB (cached by SQLAlchemy session)
-        try:
-            from CTFd.models import Configs
-
-            url_config = Configs.query.filter_by(key="CONTROLLER_URL").first()
-            key_config = Configs.query.filter_by(key="X_CONTROLLER_KEY").first()
-            controller_url = url_config.value if url_config else ""
-            controller_key = key_config.value if key_config else ""
-        except Exception:
-            return response
-
-        # Get team_id from current user (0/null if not logged in or no team)
-        team_id = "null"
-        try:
-            if current_user.is_authenticated:
-                tid = getattr(current_user, "team_id", None)
-                team_id = str(tid) if tid is not None else "null"
-        except Exception:
-            pass
-
-        config_snippet = f"""
-<script>
-window.CTF_CONTROLLER = {{
-  "team_id": {team_id},
-  "url": "{controller_url}",
-  "key": "{controller_key}"
-}};
-</script>
-<script src="/plugins/controller-plugin/assets/plugin.js"></script>
-"""
-        html = response.get_data(as_text=True)
-        if "</body>" in html:
-            response.set_data(html.replace("</body>", config_snippet + "\n</body>", 1))
-
-        return response

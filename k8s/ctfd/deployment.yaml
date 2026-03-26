@@ -82,3 +82,19 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
+        volumeMounts:
+        - name: plugin-init
+          mountPath: /opt/CTFd/CTFd/plugins/controller-plugin/__init__.py
+          subPath: __init__.py
+          readOnly: true
+        - name: plugin-js
+          mountPath: /opt/CTFd/CTFd/plugins/controller-plugin/assets/plugin.js
+          subPath: plugin.js
+          readOnly: true
+      volumes:
+      - name: plugin-init
+        configMap:
+          name: ctfd-plugin-init
+      - name: plugin-js
+        configMap:
+          name: ctfd-plugin-js

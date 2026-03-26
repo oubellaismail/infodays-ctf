@@ -16,14 +16,20 @@ spec:
         app: controller-api
     spec:
       serviceAccountName: ctf-controller
+      imagePullSecrets:
+      - name: docr-pull-secret
       containers:
       - name: controller-api
-        image: registry.digitalocean.com/infodays-registry/controller-api:latest
+        image: registry.digitalocean.com/infodays-registry/base:controller-api
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5000
           name: http
         env:
+        - name: KUBERNETES_SERVICE_HOST
+          value: "9f99eeed-db17-4c09-9bdf-ccb948b362c2.k8s.ondigitalocean.com"
+        - name: KUBERNETES_SERVICE_PORT
+          value: "443"
         - name: CTF_MASTER_SECRET
           valueFrom:
             secretKeyRef:
@@ -53,6 +59,14 @@ spec:
             port: 5000
           initialDelaySeconds: 5
           periodSeconds: 5
+        volumeMounts:
+        - name: challenge-manifests
+          mountPath: /app/challenges/manifests
+          readOnly: true
+      volumes:
+      - name: challenge-manifests
+        configMap:
+          name: challenge-manifests
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

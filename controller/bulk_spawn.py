@@ -42,6 +42,10 @@ from kubernetes.client.models import (
     V1IngressServiceBackend,
     V1ServiceBackendPort,
     V1IngressTLS,
+    V1SecurityContext,
+    V1PodSecurityContext,
+    V1Capabilities,
+    V1SeccompProfile,
 )
 
 from k8s_client import init_k8s_client
@@ -148,6 +152,12 @@ def create_deployment(apps_v1: Any, team_id: str, challenge: dict) -> str:
             limits={"cpu": "0.5", "memory": challenge.get("memory_limit", "128Mi")},
             requests={"cpu": "0.1", "memory": "32Mi"},
         ),
+        security_context=V1SecurityContext(
+            allow_privilege_escalation=False,
+            capabilities=V1Capabilities(drop=["ALL"]),
+            run_as_non_root=True,
+            run_as_user=1000,
+        ),
     )
 
     body = V1Deployment(
@@ -162,7 +172,14 @@ def create_deployment(apps_v1: Any, team_id: str, challenge: dict) -> str:
             selector=V1LabelSelector(match_labels=labels),
             template=V1PodTemplateSpec(
                 metadata=V1ObjectMeta(labels=labels),
-                spec=V1PodSpec(containers=[container]),
+                spec=V1PodSpec(
+                    containers=[container],
+                    security_context=V1PodSecurityContext(
+                        run_as_non_root=True,
+                        run_as_user=1000,
+                        seccomp_profile=V1SeccompProfile(type="RuntimeDefault"),
+                    ),
+                ),
             ),
         ),
     )
