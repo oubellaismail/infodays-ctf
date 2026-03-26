@@ -7,6 +7,7 @@ Auto-generated from all feature plans. Last updated: 2026-03-26
 - MySQL 8 StatefulSet with 10 Gi PVC on `do-block-storage` StorageClass; Redis ephemeral (no PVC) (002-ctfd-platform-stack)
 - Bash 5 (scripts), Dockerfile (BuildKit ≥ 1.4), Python 3.11 (web + misc examples), C11 (pwn binary) + Alpine Linux 3.19 (web, misc runtime), Ubuntu 22.04 (pwn runtime), socat 1.7 (pwn + misc), Flask 3.x (web example), Python 3.11-alpine (misc) (004-base-images-docr)
 - N/A for service images; `challenge.zip` artifact written to host `./dist/` via BuildKit `--output` for static builder (004-base-images-docr)
+- YAML (Kubernetes manifests), Bash 5 (test runner) + Kubernetes NetworkPolicy API, PSS admission controller (built-in), RBAC API (built-in), Cilium CNI (DOKS), `kubectl` (005-network-hardening-isolation)
 
 - Python 3.11+; `kubernetes` official Python client; `fastapi`; `uvicorn`; `httpx`; `pydantic` v2; `pytest` (003-challenge-controller-pod-lifecycle)
 - Controller API: FastAPI (not Flask/Django) — single uvicorn worker, stateless, K8s annotations as lifecycle state (003-challenge-controller-pod-lifecycle)
@@ -157,10 +158,9 @@ terraform -chdir=infra/terraform destroy
 HCL (Terraform ≥1.5); YAML (Kubernetes manifests via TF providers): Follow standard conventions
 
 ## Recent Changes
+- 005-network-hardening-isolation: Enforced network isolation — standalone NetworkPolicy YAMLs for challenges+ctfd namespaces, scoped `allow-ctfd-egress-internet` to controller-api pods only, complete RBAC for ctf-controller (all verbs) + new ctf-daemon SA with least-privilege Role, PSS namespace-labels.yaml, 4-pod isolation test suite + run-isolation-tests.sh (4/4 tests pass on cluster)
 - 005-integration-fixes: Fixed end-to-end challenge flow — CTFd plugin rewritten (register_script + proxy routes), network policies for challenges namespace, PodSecurity compliance in bulk_spawn, port fixes, deploy-challenge.sh automation script
 - 004-base-images-docr: Added Bash 5 (scripts), Dockerfile (BuildKit ≥ 1.4), Python 3.11 (web + misc examples), C11 (pwn binary) + Alpine Linux 3.19 (web, misc runtime), Ubuntu 22.04 (pwn runtime), socat 1.7 (pwn + misc), Flask 3.x (web example), Python 3.11-alpine (misc)
-- 003-challenge-controller-pod-lifecycle: Added Python 3.11+ controller (FastAPI + kubernetes client + daemon); CTFd plugin (Flask Blueprint + JS DOM injection); challenge manifests YAML schema; teardown script
-- 002-ctfd-platform-stack: Added HCL (Terraform ≥1.5) for any Terraform additions; YAML (Kubernetes manifests); Bash (setup script); Python 3.11+ (import script) + `digitalocean` Terraform provider v2.x (already present); Kubernetes manifest files applied via `kubectl`; CTFd image `ctfd/ctfd:latest`; MySQL 8 image `mysql:8`; Redis 7 image `redis:7-alpine`
 
 ## Key Integration Details
 
