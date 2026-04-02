@@ -155,21 +155,18 @@ def build_challenge_url(core_v1: Any, team_id: str, challenge_id: str) -> Option
     if challenge.get("type") == "http":
         return f"https://team-{team_id}-{challenge_id}.challenges.infodays.net"
 
-    # TCP: lookup port from NGINX ConfigMap
+    # TCP: get NodePort from the challenge service + any node's external IP
     try:
-        cm = core_v1.read_namespaced_config_map("tcp-services", "ingress-nginx")
-        existing = cm.data or {}
         svc_name = service_name(team_id, challenge_id)
+        svc = core_v1.read_namespaced_service(svc_name, "challenges")
+        node_port = svc.spec.ports[0].node_port
+        if not node_port:
+            logger.warning(f"NodePort not assigned yet for {svc_name}")
+            return None
 
-        for port_key, port_val in existing.items():
-            if svc_name in port_val:
-                return f"nc challenges.infodays.net {port_key}"
-
-        # TCP port not yet in ConfigMap — bulk_spawn may not have run yet
-        logger.warning(f"TCP port not found in ConfigMap for {svc_name}")
-        return None
+        return f"nc challenges.infodays.net {node_port}"
     except ApiException as e:
-        logger.error(f"Failed to read tcp-services ConfigMap: {e.status} {e.reason}")
+        logger.error(f"Failed to build TCP URL for {svc_name}: {e.status} {e.reason}")
         return None
 
 

@@ -31,7 +31,7 @@ def fetch_teams(ctfd_url: str, admin_token: str) -> list[dict]:
         List of {id: str, name: str} dicts
     """
     url = f"{ctfd_url}/api/v1/teams?per_page=100"
-    headers = {"Authorization": f"Token {admin_token}"}
+    headers = {"Authorization": f"Token {admin_token}", "Content-Type": "application/json"}
 
     try:
         response = httpx.get(url, headers=headers, follow_redirects=True)
@@ -57,7 +57,7 @@ def fetch_challenges(ctfd_url: str, admin_token: str) -> dict:
         Dict mapping challenge name → ctfd_id
     """
     url = f"{ctfd_url}/api/v1/challenges?per_page=100"
-    headers = {"Authorization": f"Token {admin_token}"}
+    headers = {"Authorization": f"Token {admin_token}", "Content-Type": "application/json"}
 
     try:
         response = httpx.get(url, headers=headers, follow_redirects=True)
@@ -90,7 +90,7 @@ def fetch_existing_flags(ctfd_url: str, admin_token: str, challenge_id: int) -> 
         Set of flag strings already registered
     """
     url = f"{ctfd_url}/api/v1/flags?per_page=500&challenge_id={challenge_id}"
-    headers = {"Authorization": f"Token {admin_token}"}
+    headers = {"Authorization": f"Token {admin_token}", "Content-Type": "application/json"}
 
     try:
         response = httpx.get(url, headers=headers, follow_redirects=True)

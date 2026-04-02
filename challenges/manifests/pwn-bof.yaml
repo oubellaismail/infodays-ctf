@@ -1,5 +1,5 @@
 id: pwn-bof
-name: "Buffer Overflow"
+name: "Pwn BoF"
 category: pwn
 image: registry.digitalocean.com/infodays-registry/base:pwn
 port: 1337

@@ -1,0 +1,21 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ctf-controller-nodes
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["list", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ctf-controller-nodes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ctf-controller-nodes
+subjects:
+- kind: ServiceAccount
+  name: ctf-controller
+  namespace: ctfd
