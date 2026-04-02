@@ -4,7 +4,7 @@ metadata:
   name: ctfd
   namespace: ctfd
 spec:
-  replicas: 2
+  replicas: 5
   selector:
     matchLabels:
       app: ctfd
@@ -79,9 +79,12 @@ spec:
           initialDelaySeconds: 10
           periodSeconds: 5
         resources:
+          requests:
+            cpu: 1000m
+            memory: 1536Mi
           limits:
-            cpu: 500m
-            memory: 512Mi
+            cpu: 2000m
+            memory: 2Gi
         volumeMounts:
         - name: plugin-init
           mountPath: /opt/CTFd/CTFd/plugins/controller-plugin/__init__.py

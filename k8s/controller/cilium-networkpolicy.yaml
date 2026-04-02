@@ -1,0 +1,14 @@
+apiVersion: "cilium.io/v2"
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-controller-to-kube-apiserver
+  namespace: ctfd
+spec:
+  endpointSelector:
+    matchExpressions:
+    - key: app
+      operator: In
+      values: [controller-api, controller-daemon]
+  egress:
+  - toEntities:
+    - kube-apiserver

@@ -1,6 +1,6 @@
 # infodays-ctf Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-03-26
+Auto-generated from all feature plans. Last updated: 2026-04-02
 
 ## Active Technologies
 - HCL (Terraform ≥1.5) for any Terraform additions; YAML (Kubernetes manifests); Bash (setup script); Python 3.11+ (import script) + `digitalocean` Terraform provider v2.x (already present); Kubernetes manifest files applied via `kubectl`; CTFd image `ctfd/ctfd:latest`; MySQL 8 image `mysql:8`; Redis 7 image `redis:7-alpine` (002-ctfd-platform-stack)
@@ -8,6 +8,8 @@ Auto-generated from all feature plans. Last updated: 2026-03-26
 - Bash 5 (scripts), Dockerfile (BuildKit ≥ 1.4), Python 3.11 (web + misc examples), C11 (pwn binary) + Alpine Linux 3.19 (web, misc runtime), Ubuntu 22.04 (pwn runtime), socat 1.7 (pwn + misc), Flask 3.x (web example), Python 3.11-alpine (misc) (004-base-images-docr)
 - N/A for service images; `challenge.zip` artifact written to host `./dist/` via BuildKit `--output` for static builder (004-base-images-docr)
 - YAML (Kubernetes manifests), Bash 5 (test runner) + Kubernetes NetworkPolicy API, PSS admission controller (built-in), RBAC API (built-in), Cilium CNI (DOKS), `kubectl` (005-network-hardening-isolation)
+- Bash 5 (backup script), k6 JavaScript ESM (load test) + k6 (load test runtime), kubectl + kubeconfig (backup + checklist), mysqldump (inside MySQL pod) (006-event-readiness-runbook)
+- `backups/` (local host, SQL dumps), `tests/load/results/` (local host, JSON run summaries) (006-event-readiness-runbook)
 
 - Python 3.11+; `kubernetes` official Python client; `fastapi`; `uvicorn`; `httpx`; `pydantic` v2; `pytest` (003-challenge-controller-pod-lifecycle)
 - Controller API: FastAPI (not Flask/Django) — single uvicorn worker, stateless, K8s annotations as lifecycle state (003-challenge-controller-pod-lifecycle)
@@ -158,9 +160,10 @@ terraform -chdir=infra/terraform destroy
 HCL (Terraform ≥1.5); YAML (Kubernetes manifests via TF providers): Follow standard conventions
 
 ## Recent Changes
+- 006-load-testing: 200-VU soak tests (50 teams × 4 members, 45 min). CTFd scaled 2→5 replicas, workers 8→4, memory 512Mi→2Gi. MySQL memory 1Gi→2Gi (OOM fix), max-connections=500, innodb-buffer-pool-size=512MB. import_flags.py Content-Type fix. Challenge manifest names aligned to CTFd. tcp-services sequential port generation fix. Phase 7 planned for 100-team (400 VU) scaling with ProxySQL.
+- 006-event-readiness-runbook: Added Bash 5 (backup script), k6 JavaScript ESM (load test) + k6 (load test runtime), kubectl + kubeconfig (backup + checklist), mysqldump (inside MySQL pod)
 - 005-network-hardening-isolation: Enforced network isolation — standalone NetworkPolicy YAMLs for challenges+ctfd namespaces, scoped `allow-ctfd-egress-internet` to controller-api pods only, complete RBAC for ctf-controller (all verbs) + new ctf-daemon SA with least-privilege Role, PSS namespace-labels.yaml, 4-pod isolation test suite + run-isolation-tests.sh (4/4 tests pass on cluster)
 - 005-integration-fixes: Fixed end-to-end challenge flow — CTFd plugin rewritten (register_script + proxy routes), network policies for challenges namespace, PodSecurity compliance in bulk_spawn, port fixes, deploy-challenge.sh automation script
-- 004-base-images-docr: Added Bash 5 (scripts), Dockerfile (BuildKit ≥ 1.4), Python 3.11 (web + misc examples), C11 (pwn binary) + Alpine Linux 3.19 (web, misc runtime), Ubuntu 22.04 (pwn runtime), socat 1.7 (pwn + misc), Flask 3.x (web example), Python 3.11-alpine (misc)
 
 ## Key Integration Details
 
@@ -192,6 +195,27 @@ HCL (Terraform ≥1.5); YAML (Kubernetes manifests via TF providers): Follow sta
 bash scripts/deploy-challenge.sh challenges/manifests/<id>.yaml
 # Automates: CTFd creation → ConfigMap update → controller restart → bulk_spawn → flag import
 ```
+
+### CTFd Token Auth Quirk
+- CTFd requires `Content-Type: application/json` header on ALL requests using API token auth, including GETs
+- Without it, CTFd's `tokens()` middleware skips auth processing and returns 302 redirect to login
+- All API calls in import_flags.py, scripts, and k6 tests must include this header
+
+### Resource Sizing (validated under 200-VU load)
+- CTFd: 5 replicas, 4 workers each, 2Gi memory limit, 1000m CPU request
+- MySQL: 1 replica, 2Gi memory limit, max-connections=500, innodb-buffer-pool-size=512MB
+- Node pool: 5 × s-4vcpu-8gb
+- Known bottleneck: MySQL single-writer throughput → p95 ~10s at 200 VUs. Phase 7 adds ProxySQL.
+
+### TCP Port Map Generation
+- tcp-services ConfigMap entries MUST be generated sequentially (not in parallel threads)
+- Race condition validated: parallel bulk_spawn produced 43/100 entries instead of 100
+- Fix: single-threaded Python generator → single kubectl patch
+
+### CiliumNetworkPolicy (DOKS-specific)
+- Standard Kubernetes NetworkPolicy cannot target kube-apiserver on DOKS (Cilium CNI)
+- Controller needs `CiliumNetworkPolicy` with `toEntities: [kube-apiserver]` for K8s API access
+- ClusterRole + ClusterRoleBinding needed for node listing (NodePort discovery)
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

@@ -47,7 +47,7 @@ variable "node_size" {
 
 variable "node_count" {
   type        = number
-  default     = 4
+  default     = 5
   description = "Number of nodes in the pool (must not exceed 5 per constitution)"
 }
 

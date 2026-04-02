@@ -1,5 +1,5 @@
 id: misc-riddle
-name: "TCP Riddle"
+name: "Misc Riddle"
 category: misc
 image: registry.digitalocean.com/infodays-registry/base:misc
 port: 4444

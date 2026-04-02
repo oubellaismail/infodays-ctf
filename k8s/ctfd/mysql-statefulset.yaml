@@ -17,6 +17,9 @@ spec:
       containers:
       - name: mysql
         image: mysql:8
+        args:
+        - --max-connections=500
+        - --innodb-buffer-pool-size=536870912
         env:
         - name: MYSQL_ROOT_PASSWORD
           valueFrom:
@@ -41,7 +44,7 @@ spec:
         resources:
           limits:
             cpu: 500m
-            memory: 1Gi
+            memory: 2Gi
         volumeMounts:
         - name: mysql-data
           mountPath: /var/lib/mysql

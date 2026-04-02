@@ -60,3 +60,8 @@ __pycache__/
 
 # CTFd generated credentials
 .ctfd.env
+
+# Phase 6: Event Readiness & Runbook
+backups/*.sql
+tests/load/results/*.json
+tests/load/results/*.txt

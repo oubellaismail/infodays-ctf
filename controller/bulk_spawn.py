@@ -150,7 +150,7 @@ def create_deployment(apps_v1: Any, team_id: str, challenge: dict) -> str:
         ],
         resources=V1ResourceRequirements(
             limits={"cpu": "0.5", "memory": challenge.get("memory_limit", "128Mi")},
-            requests={"cpu": "0.1", "memory": "32Mi"},
+            requests={"cpu": "0.05", "memory": "32Mi"},
         ),
         security_context=V1SecurityContext(
             allow_privilege_escalation=False,
@@ -218,7 +218,7 @@ def create_service(core_v1: Any, team_id: str, challenge: dict) -> str:
             labels=labels,
         ),
         spec=V1ServiceSpec(
-            type="ClusterIP",
+            type="NodePort" if challenge.get("type") == "tcp" else "ClusterIP",
             selector=labels,
             ports=[V1ServicePort(port=challenge["port"], target_port=challenge["port"])],
         ),

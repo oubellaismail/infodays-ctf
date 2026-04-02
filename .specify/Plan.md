@@ -23,9 +23,10 @@
 12. [Phase 4 — Challenge Base Images & DOCR](#phase-4--challenge-base-images--docr)
 13. [Phase 5 — Network Hardening & Isolation](#phase-5--network-hardening--isolation)
 14. [Phase 6 — Event Readiness & Runbook](#phase-6--event-readiness--runbook)
-15. [Time Estimates](#15-time-estimates)
-16. [Risk Register](#16-risk-register)
-17. [Glossary](#17-glossary)
+15. [Phase 7 — 100-Team Scaling (400 VUs)](#phase-7--100-team-scaling-400-vus)
+16. [Time Estimates](#16-time-estimates)
+17. [Risk Register](#17-risk-register)
+18. [Glossary](#18-glossary)
 
 ---
 
@@ -40,7 +41,7 @@
 | Instances dashboard | `https://ctfd.infodays.net` (via CTFd plugin — no separate URL) |
 | Event duration | 12 hours |
 | Audience | Closed — invited teams only |
-| Teams | 20–50 (infrastructure specced for 50 worst case) |
+| Teams | 20–50 baseline, up to 100 with Phase 7 scaling |
 | Players per team | Max 4 — all sharing one CTFd team account |
 | CTFd registration | Admin pre-creates all team accounts before event start |
 | CTFd branding | TBD — default theme used until confirmed |
@@ -70,7 +71,7 @@
 ┌──────────▼────────────┐        ┌────────────▼──────────────────┐
 │  Namespace: ctfd       │        │  Namespace: challenges         │
 │                        │        │                                │
-│  CTFd   (2 replicas)   │        │  team-1-web-1   replicas=1    │
+│  CTFd   (5 replicas)   │        │  team-1-web-1   replicas=1    │
 │  MySQL  (StatefulSet)  │        │  team-1-pwn-1   replicas=0    │
 │  Redis                 │        │  team-1-misc-1  replicas=1    │
 │  Controller API        │        │  team-2-web-1   replicas=0    │
@@ -106,7 +107,7 @@ NetworkPolicy rules (strictly enforced):
 | Cloud provider | DigitalOcean | Selected after pricing comparison |
 | Kubernetes | DOKS (DigitalOcean Managed Kubernetes) | Managed control plane, DO LB auto-provisioned |
 | Provisioning | Terraform | Reproducible, state saved, easy to rebuild or tear down |
-| Node pool | 4 × `s-4vcpu-8gb` | Sized for 50 teams worst case — see §7 |
+| Node pool | 5 × `s-4vcpu-8gb` | Scaled from 4 to 5 during load testing to support 50 teams — see §7 |
 | Container registry | DigitalOcean Container Registry (DOCR) | Native DOKS integration — no imagePullSecret config needed |
 | Ingress | NGINX Ingress Controller (Helm) | HTTP/HTTPS + TCP ConfigMap for Pwn/Misc port passthrough |
 | TLS | cert-manager + Let's Encrypt | Auto-issuance and renewal on `infodays.net` |
@@ -133,19 +134,19 @@ NetworkPolicy rules (strictly enforced):
 
 ### Challenge counts
 
-| Category | Max challenges | Pods per team | Max pods (50 teams) |
-|---|---|---|---|
-| Web | 5 | up to 5 | 250 |
-| Pwn | 5 | up to 5 | 250 |
-| Misc (TCP) | 5 | up to 5 | 250 |
-| Crypto | 5 | 0 | 0 |
-| Forensics | 5 | 0 | 0 |
-| Reversing | 5 | 0 | 0 |
-| OSINT | 5 | 0 | 0 |
-| **Total** | **up to 35** | **up to 15/team** | **750 pods max** |
+| Category | Max challenges | Pods per team | Max pods (50 teams) | Max pods (100 teams) |
+|---|---|---|---|---|
+| Web | 5 | up to 5 | 250 | 500 |
+| Pwn | 5 | up to 5 | 250 | 500 |
+| Misc (TCP) | 5 | up to 5 | 250 | 500 |
+| Crypto | 5 | 0 | 0 | 0 |
+| Forensics | 5 | 0 | 0 | 0 |
+| Reversing | 5 | 0 | 0 | 0 |
+| OSINT | 5 | 0 | 0 | 0 |
+| **Total** | **up to 35** | **up to 15/team** | **750 pods max** | **1,500 pods max** |
 
-> At any moment, at most **200 pods are in `Running` state** (50 teams × 4 active cap).
-> The remaining 550 pods sit at `replicas=0` — zero CPU, zero RAM consumed.
+> **50 teams:** at most **200 pods Running** (50 × 4 active cap). The remaining 550 sit at `replicas=0`.
+> **100 teams (Phase 7):** at most **400 pods Running** (100 × 4 active cap). The remaining 1,100 sit at `replicas=0`. Requires ProxySQL + dedicated MySQL node + larger node pool — see Phase 7.
 
 ### Instance URL format
 
@@ -248,15 +249,25 @@ If a team's pod is auto-suspended while they're actively working, they simply cl
 
 ## 7. Resource Sizing
 
-### Per-pod resource limits
+### Per-pod resource limits (challenge pods)
 
 | Resource | Limit | Request |
 |---|---|---|
 | RAM | 128MB | 32MB |
 | CPU | 0.5 cores | 0.1 cores |
 
-> 128MB chosen over 256MB because at 50 teams × 4 running pods × 256MB = ~50GB which exceeds the 32GB cluster. At 128MB: 50 × 4 × 128MB = ~25GB — fits with headroom.
+> 128MB chosen over 256MB because at 50 teams × 4 running pods × 256MB = ~50GB which exceeds cluster capacity. At 128MB: 50 × 4 × 128MB = ~25GB — fits with headroom.
 > If a specific challenge needs more RAM (e.g. heavy pwn binary), the manifest can override the limit per challenge individually.
+
+### Platform resource limits (validated under 200-VU load testing)
+
+| Component | CPU request | CPU limit | Memory request | Memory limit | Notes |
+|---|---|---|---|---|---|
+| CTFd (per replica) | 1000m | 2000m | 1536Mi | 2Gi | 4 gunicorn workers; OOM at 1536Mi under 200 VUs |
+| MySQL 8 | — | 500m | — | 2Gi | max-connections=500, innodb-buffer-pool-size=512MB; OOM at 1Gi |
+| Redis | — | 100m | — | 256Mi | Ephemeral, no persistence |
+| Controller API | — | — | — | 512Mi | FastAPI + kubernetes client |
+| Lifetime Daemon | — | — | — | 128Mi | Lightweight polling loop |
 
 ### Cluster RAM budget (worst case: 50 teams, 4 Running pods each)
 
@@ -264,27 +275,61 @@ If a team's pod is auto-suspended while they're actively working, they simply cl
 |---|---|---|---|
 | Running challenge pods (replicas=1) | 128MB | 200 | ~25.6GB |
 | Suspended challenge pods (replicas=0) | 0MB | 550 | 0GB |
-| CTFd (2 replicas) | 512MB | 2 | ~1GB |
-| MySQL | 1GB | 1 | ~1GB |
+| CTFd (5 replicas) | 2Gi | 5 | ~10GB |
+| MySQL | 2Gi | 1 | ~2GB |
 | Redis | 256MB | 1 | ~0.25GB |
-| Controller API | 256MB | 1 | ~0.25GB |
-| Lifetime Daemon | 128MB | 1 | ~0.13GB |
+| Controller API | 512Mi | 1 | ~0.5GB |
+| Lifetime Daemon | 128Mi | 1 | ~0.13GB |
 | NGINX Ingress | 256MB | 1 | ~0.25GB |
 | Kube system overhead | — | — | ~2GB |
-| **Total** | | | **~30.5GB** |
+| **Total** | | | **~40.7GB** |
 
-**Cluster capacity: 4 × 8GB = 32GB — fits with ~1.5GB headroom.**
+**Cluster capacity: 5 × 8GB = 40GB — tight fit at worst case.**
 
-### DigitalOcean cost estimate
+> The 200-pod worst case rarely occurs simultaneously. Real-world load testing showed stable operation at 200 VUs (50 teams × 4 members) with p95 ~10s and error rate <1%. The bottleneck is MySQL single-writer throughput, not RAM.
+
+### Cluster RAM budget (Phase 7: 100 teams, 4 Running pods each)
+
+| Workload | RAM per unit | Count | Total |
+|---|---|---|---|
+| Running challenge pods (replicas=1) | 128MB | 400 | ~51.2GB |
+| Suspended challenge pods (replicas=0) | 0MB | 1,100 | 0GB |
+| CTFd (10 replicas) | 2Gi | 10 | ~20GB |
+| ProxySQL | 256MB | 2 | ~0.5GB |
+| MySQL (dedicated node) | 12Gi | 1 | ~12GB |
+| Redis | 256MB | 1 | ~0.25GB |
+| Controller API | 512Mi | 1 | ~0.5GB |
+| Lifetime Daemon | 128Mi | 1 | ~0.13GB |
+| NGINX Ingress | 256MB | 1 | ~0.25GB |
+| Kube system overhead | — | — | ~3GB |
+| **Total** | | | **~87.8GB** |
+
+**Phase 7 cluster capacity: 6 × s-8vcpu-16gb (general) + 1 × s-4vcpu-16gb (MySQL) = 96 + 16 = 112GB — fits with ~24GB headroom.**
+
+> Alternatively: 8 × s-4vcpu-8gb (general) + 1 × s-4vcpu-16gb (MySQL) = 64 + 16 = 80GB — tight, would require reducing active cap from 4 to 3 or using fewer challenge categories.
+
+### DigitalOcean cost estimate (50 teams — Phases 1–6)
 
 | Resource | Unit cost | Event cost (12h) | Dev/test (2 days) |
 |---|---|---|---|
-| `s-4vcpu-8gb` × 4 nodes | ~$48/mo each | ~$3.84 | ~$12.80 |
+| `s-4vcpu-8gb` × 5 nodes | ~$48/mo each | ~$4.80 | ~$16.00 |
 | DO Load Balancer | ~$12/mo | ~$0.24 | ~$0.80 |
 | DOCR Starter tier | $0/mo (free tier) | $0 | $0 |
-| **Total** | | **~$4.08** | **~$13.60** |
+| **Total** | | **~$5.04** | **~$16.80** |
 
-**Estimated total project cost: ~$18–20.**
+**Estimated project cost (50 teams): ~$22–25.**
+
+### DigitalOcean cost estimate (100 teams — Phase 7)
+
+| Resource | Unit cost | Event cost (12h) | Dev/test (3 days) |
+|---|---|---|---|
+| `s-8vcpu-16gb` × 6 nodes (general) | ~$96/mo each | ~$11.52 | ~$57.60 |
+| `s-4vcpu-16gb` × 1 node (MySQL) | ~$96/mo | ~$1.92 | ~$9.60 |
+| DO Load Balancer | ~$12/mo | ~$0.24 | ~$1.20 |
+| DOCR Starter tier | $0/mo (free tier) | $0 | $0 |
+| **Total** | | **~$13.68** | **~$68.40** |
+
+**Estimated project cost (100 teams): ~$82–90 including Phase 7 dev/testing.**
 
 ---
 
@@ -298,6 +343,7 @@ If a team's pod is auto-suspended while they're actively working, they simply cl
 | 4 | Challenge Base Images & DOCR | Web/Pwn/Misc/Static base images pushed to DOCR | Phase 1 |
 | 5 | Network Hardening & Isolation | NetworkPolicies, RBAC, LimitRange, PodSecurity | Phase 2, 3, 4 |
 | 6 | Event Readiness & Runbook | Load test, pre-event checklist, operations runbook | All phases |
+| 7 | 100-Team Scaling (400 VUs) | ProxySQL, dedicated MySQL node, CTFd scale-out, 400-VU validation | Phase 6 |
 
 ---
 
@@ -414,20 +460,23 @@ Components:
 
 1. CTFd Deployment
    - Image: ctfd/ctfd:latest
-   - Replicas: 2
+   - Replicas: 5 (scaled from 2 during 200-VU load testing)
    - All config via env vars (no baked config files):
        DATABASE_URL, REDIS_URL, SECRET_KEY, SERVER_SENT_EVENTS=false,
-       WORKERS=4, MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, MAILFROM_ADDR
+       WORKERS=4 (reduced from 8 — fewer workers per replica reduces per-pod memory and MySQL connections),
+       REVERSE_PROXY=true, SESSION_COOKIE_SECURE=true, SESSION_COOKIE_HTTPONLY=true,
+       MAIL_SERVER, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD, MAILFROM_ADDR
    - Liveness probe:  GET /healthcheck — initialDelaySeconds: 30, periodSeconds: 10
    - Readiness probe: GET /healthcheck — initialDelaySeconds: 10, periodSeconds: 5
    - Init container: busybox, runs: until nc -z mysql 3306; do sleep 2; done
-   - Resource limits: 512Mi RAM / 0.5 CPU
+   - Resource limits: 2Gi RAM / 2 CPU (request: 1536Mi / 1 CPU)
 
 2. MySQL 8 StatefulSet
    - Replicas: 1
    - PVC: 10Gi, storageClassName: do-block-storage
    - Credentials from K8s Secret ctfd-secrets
-   - Resource limits: 1Gi RAM / 0.5 CPU
+   - Args: --max-connections=500 --innodb-buffer-pool-size=536870912 (512MB)
+   - Resource limits: 2Gi RAM / 0.5 CPU (OOM-killed at 1Gi under 200 VU load)
 
 3. Redis Deployment
    - Image: redis:7-alpine
@@ -872,23 +921,27 @@ Note: Alerting and monitoring are postponed to v2 — do NOT include Prometheus,
 Grafana, Alertmanager, or kube-state-metrics in this phase.
 
 Load test tool: k6
-Target SLA: p95 response time < 2 seconds, error rate < 1% at 50 concurrent users
+Target SLA: p95 response time < 3 seconds, error rate < 1% at 200 concurrent VUs (50 teams × 4 members)
 Domain: ctfd.infodays.net
 
 Goals:
 
 1. Load test script (tests/load/k6-ctf-scenario.js):
-   Simulates 50 concurrent virtual users for 5 minutes.
+   Simulates 200 concurrent virtual users (50 teams × 4 members each) for 45 minutes.
+   VU-to-team assignment: TEAMS[Math.floor((__VU - 1) / 4) % TEAMS.length]
+   Login stagger: 1 second per team (spread 50 teams over 50 seconds to avoid login burst)
    Per VU scenario:
-     a) GET https://ctfd.infodays.net              (home / login page)
-     b) POST /login                                (with test team credentials)
-     c) GET /challenges                            (challenge list)
-     d) POST /api/v1/challenges/{id}/attempt       (wrong flag submission)
-     e) POST /api/v1/challenges/{id}/attempt       (correct flag submission)
-     f) POST to controller /activate               (activate a test challenge instance)
-     g) GET controller /status/{team_id}           (check instance status)
+     a) GET /login                                 (extract CSRF nonce)
+     b) POST /login                                (with team credentials + nonce)
+     c) GET /challenges                            (challenge list — primary event action)
+     d) POST /api/v1/challenges/attempt            (wrong flag submission)
+     e) POST /api/v1/challenges/attempt            (correct flag submission)
+     f) POST /controller-proxy/activate            (activate via CTFd proxy)
+     g) GET /controller-proxy/status/{team_id}     (check instance status)
+   Session management: CTFd session cookie re-injected each iteration (k6 clears session cookies)
+   429 handling: login + flag submission 429s marked as expected (CTFd rate limiting)
    Thresholds:
-     http_req_duration: p(95) < 2000
+     http_req_duration: p(95) < 3000
      http_req_failed: rate < 0.01
    Output: JSON summary → tests/load/results/
 
@@ -899,7 +952,7 @@ Goals:
 
 3. Pre-event checklist (docs/pre-event-checklist.md):
    Infrastructure:
-   - [ ] DOKS: all 4 nodes Ready (kubectl get nodes)
+   - [ ] DOKS: all 5 nodes Ready (kubectl get nodes)
    - [ ] DO Load Balancer: IP assigned, DNS resolving
    - [ ] TLS certificate: valid, not expiring within 30 days
    - [ ] DOCR: all challenge images present (doctl registry repository list-tags)
@@ -926,7 +979,7 @@ Goals:
 
    Ops readiness:
    - [ ] MySQL backup taken: scripts/backup-mysql.sh
-   - [ ] Load test passed: p95 < 2s, error rate < 1%
+   - [ ] Load test passed: p95 < 3s, error rate < 1% at 200 VUs (50 teams × 4 members)
    - [ ] Runbook reviewed by at least one team member
    - [ ] Teardown command tested in staging (not production)
 
@@ -974,7 +1027,7 @@ Out of scope: alerting, monitoring dashboards — these are v2.
 
 ### Definition of Done
 
-- [ ] Load test passes SLA: p95 < 2s, error rate < 1% at 50 concurrent virtual users
+- [ ] Load test passes SLA: p95 < 3s, error rate < 1% at 200 concurrent VUs (50 teams × 4 members)
 - [ ] Pre-event checklist completed end-to-end on the live cluster — all items checked
 - [ ] MySQL backup script tested and produces a valid `.sql` file
 - [ ] At least 3 runbook scenarios manually tested: force-suspend a pod, scale CTFd, teardown challenges
@@ -1430,7 +1483,131 @@ challenges/manifests/
 
 ---
 
-## 15. Time Estimates
+## Phase 7 — 100-Team Scaling (400 VUs)
+
+### Objective
+
+Scale the platform from 50 teams (200 VUs) to 100 teams (400 VUs — 4 members per team). Current bottleneck is MySQL single-writer throughput: 200 VUs produce p95 ~10s latency because 5 CTFd replicas × 4 workers = 20 persistent MySQL connections competing for row locks. At 400 VUs this doubles to 40 connections with proportionally worse contention. The primary fix is ProxySQL connection pooling between CTFd and MySQL, combined with a dedicated MySQL node and scaled-out CTFd replicas.
+
+### Background — Load test results (Phase 6, 200 VUs)
+
+| Run | CTFd replicas | Workers | MySQL mem | p95 (ms) | Error rate | Status |
+|---|---|---|---|---|---|---|
+| 1 | 3 | 8 | 1Gi | 13,920 | 1.96% | FAIL |
+| 2 | 5 | 8 | 2Gi | 17,540 | 3.31% | FAIL (MySQL OOM) |
+| 3 | 5 | 4 | 2Gi | 8,850 | 0.40% | Error OK, p95 FAIL |
+| 4 | 5 | 4 | 2Gi (1s stagger) | 9,970 | 0.39% | Error OK, p95 FAIL |
+
+Root cause analysis: MySQL is the single point of serialization. More CTFd workers/replicas without connection pooling worsens contention. Reducing workers from 8→4 improved error rate (fewer OOM kills) but p95 remained ~10s.
+
+### Spec Kit `/specify` prompt
+
+```
+/specify
+Project: InfoDays CTF on DigitalOcean — Phase 7: 100-Team Scaling (400 VUs).
+
+Current state: 5 × s-4vcpu-8gb nodes, 5 CTFd replicas (4 workers each), MySQL 8 single
+instance (2Gi, max-connections=500, innodb-buffer-pool-size=512MB). At 200 VUs: p95 ~10s,
+error rate <1%. Target: p95 < 3s, error rate < 1% at 400 VUs (100 teams × 4 members).
+
+Problem: MySQL single-writer bottleneck. 20 persistent connections (5 replicas × 4 workers)
+contending for row locks on CTFd's submissions, tracking, and session tables.
+
+Goals:
+
+1. ProxySQL connection pooler (primary fix):
+   - Deploy ProxySQL as a Deployment (2 replicas) in ctfd namespace
+   - Image: proxysql/proxysql:2.x
+   - Multiplexing mode: pool ~50 server connections serving 400+ client connections
+   - CTFd DATABASE_URL changes from mysql+pymysql://ctfd:pass@mysql/ctfd
+     to mysql+pymysql://ctfd:pass@proxysql/ctfd
+   - ProxySQL config:
+       mysql_servers: mysql.ctfd.svc.cluster.local:3306
+       mysql_users: ctfd (same credentials as direct connection)
+       mysql_query_rules: route all to single writer (no read replicas in v1)
+       max_connections: 50 (server-side)
+       multiplexing: enabled
+       connection_pool_size: 50
+   - Health check: ProxySQL admin interface on port 6032
+   - Resource limits: 256Mi RAM / 0.25 CPU per replica
+
+2. Dedicated MySQL node (isolation):
+   - Add a new node pool: 1 × s-4vcpu-16gb (16GB RAM for MySQL)
+   - Taint: workload=mysql:NoSchedule
+   - MySQL StatefulSet: add toleration + nodeSelector for the dedicated node
+   - Increase MySQL resource limits: 12Gi RAM / 2 CPU
+   - Increase innodb-buffer-pool-size to 8GB (rule of thumb: 50-70% of available RAM)
+   - max-connections=1000
+
+3. CTFd scale-out:
+   - Increase replicas from 5 to 8-10
+   - Workers stay at 4 per replica (ProxySQL handles connection pooling)
+   - Resource limits unchanged (2Gi / 2 CPU per replica)
+   - Consider anti-affinity rules to spread across nodes
+
+4. Node pool scaling:
+   - General pool: increase from 5 to 6 × s-4vcpu-8gb (or switch to s-8vcpu-16gb)
+   - MySQL pool: 1 × s-4vcpu-16gb (dedicated, tainted)
+   - Total: 7 nodes
+
+5. Challenge pod scaling:
+   - 100 teams × 15 service challenges × replicas=0 = 1500 Deployments (etcd pressure)
+   - 100 teams × 4 active cap = 400 Running pods × 128MB = ~51.2GB
+   - General pool must have enough RAM: 6 × 8GB = 48GB minus platform = ~35GB available
+   - May need to increase to s-8vcpu-16gb nodes (6 × 16GB = 96GB)
+   - OR reduce max challenges or active cap
+
+6. TCP port mapping at scale:
+   - Up to 10 TCP challenges (5 pwn + 5 misc) per team
+   - 100 teams × 10 TCP challenges = 1,000 unique NodePorts (30000-30999)
+   - 50 teams × 10 TCP challenges = 500 unique NodePorts — already exceeds DO LB 40-rule limit
+   - DO Load Balancer 40 forwarding-rule limit means LB CANNOT forward TCP challenge ports
+   - Current workaround (already in use): NodePort services with direct node IP access
+   - CTFd plugin shows node IP:port for TCP challenges (not domain:port via LB)
+   - NodePort range 30000-32767 provides ample room (2,767 ports available)
+   - Firewall must allow inbound on NodePort range (already configured in Phase 1)
+   - At 1,000 ports, etcd pressure from Service objects is moderate — monitor etcd latency
+   - Alternative for HA: deploy HAProxy/Envoy DaemonSet for TCP load balancing across nodes
+
+7. Updated load test (tests/load/k6-ctf-scenario.js):
+   - Scale to 400 VUs, 100 teams, 45 minutes
+   - Team assignment: TEAMS[Math.floor((__VU - 1) / 4) % TEAMS.length]
+   - Stagger: 1s per team (100 teams → 100 second ramp)
+   - Same thresholds: p95 < 3s, error rate < 1%
+
+8. CiliumNetworkPolicy for controller → kube-apiserver:
+   - Persist the currently cluster-applied CiliumNetworkPolicy to a YAML file
+   - Required on DOKS where standard NetworkPolicy cannot target kube-apiserver
+   - Also persist the ClusterRole/ClusterRoleBinding for node listing
+
+Out of scope: MySQL read replicas, Redis clustering, CDN, monitoring/alerting.
+```
+
+### Deliverables
+
+- [ ] `k8s/ctfd/proxysql-deployment.yaml` — ProxySQL Deployment + Service + ConfigMap
+- [ ] `k8s/ctfd/proxysql-configmap.yaml` — ProxySQL configuration
+- [ ] `infra/terraform/mysql-node-pool.tf` — Dedicated MySQL node pool with taint
+- [ ] `k8s/ctfd/mysql-statefulset.yaml` — Updated with toleration, nodeSelector, increased resources
+- [ ] `k8s/ctfd/deployment.yaml` — Updated DATABASE_URL to point at ProxySQL, scaled replicas
+- [ ] `k8s/controller/cilium-networkpolicy.yaml` — Persisted CiliumNetworkPolicy for kube-apiserver access
+- [ ] `k8s/controller/cluster-rbac.yaml` — Persisted ClusterRole/ClusterRoleBinding for node listing
+- [ ] `tests/load/k6-ctf-scenario.js` — Updated for 400 VUs / 100 teams
+- [ ] Updated `docs/pre-event-checklist.md` — 100-team specific checks
+- [ ] Updated `docs/event-day-runbook.md` — ProxySQL operations, node pool management
+
+### Definition of Done
+
+- [ ] 400-VU load test passes: p95 < 3s, error rate < 1% over 45 minutes
+- [ ] ProxySQL dashboard shows connection multiplexing working (50 server connections serving 400+ clients)
+- [ ] MySQL runs on dedicated node with 12Gi+ available memory
+- [ ] All 100 team accounts can log in and submit flags concurrently
+- [ ] TCP challenge ports accessible via NodePort (bypassing LB 40-rule limit)
+- [ ] CiliumNetworkPolicy and ClusterRole persisted in git (not just cluster-applied)
+
+---
+
+## 16. Time Estimates
 
 | Phase | With Claude Code + Spec Kit |
 |---|---|
@@ -1440,36 +1617,42 @@ challenges/manifests/
 | Phase 4 — Base Images & DOCR | 2–3 hours |
 | Phase 5 — Network Hardening | 1–2 hours |
 | Phase 6 — Event Readiness & Runbook | 1–2 hours |
-| **Total implementation** | **~11–17 hours** |
+| Phase 7 — 100-Team Scaling | 3–5 hours |
+| **Total implementation** | **~14–22 hours** |
 | Manual testing, dry run, challenge content | ~4–6 hours |
-| **Full project** | **~2–3 working days** |
+| **Full project** | **~3–4 working days** |
 
-> DO infrastructure cost during dev/testing (~2 days): ~$14.
-> Event day (12 hours): ~$4.
-> **Total estimated cost: ~$18–20.**
+> DO infrastructure cost during dev/testing (~3 days): ~$17.
+> Event day (12 hours): ~$5.
+> **Total estimated cost: ~$22–25.**
 
 ---
 
-## 16. Risk Register
+## 17. Risk Register
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| 50 teams × 4 running pods approaches 32GB RAM limit | Medium | High | Pod limit set to 128MB — 200 pods = ~25.6GB, fits with headroom |
+| 50 teams × 4 running pods approaches cluster RAM limit | Medium | High | 5 nodes × 8GB = 40GB; challenge pods use 128MB each — 200 pods = ~25.6GB; platform stack uses ~13GB; tight but fits |
+| MySQL OOM under concurrent load | High | Critical | **Validated:** MySQL OOM-killed at 1Gi with 200 VUs. Fixed: 2Gi limit, max-connections=500, innodb-buffer-pool-size=512MB. For 100 teams: Phase 7 adds ProxySQL connection pooling |
+| CTFd OOM under concurrent load | Medium | High | **Validated:** CTFd OOM at 1536Mi with 8 workers. Fixed: 2Gi limit, 4 workers per replica, 5 replicas |
 | CTFd plugin breaks CTFd entirely | Medium | Critical | Plugin is read-only except for Start/Stop API calls — no CTFd internals modified; tested in Phase 6 dry run |
 | ctf/activated-at annotation not set (daemon skips pod) | Low | Low | Daemon only suspends pods with annotation set — worst case pod runs slightly longer |
 | Player achieves container escape | Low | Critical | PodSecurityStandards restricted + full NetworkPolicy (Phase 5) |
 | Player reaches CTFd internals via internal network | Low | High | NetworkPolicy blocks challenges→ctfd; unique flags limit blast radius to one team |
 | MySQL data loss mid-event | Low | Critical | do-block-storage PVC (durable), pre-event backup, backup script in runbook |
 | Master secret in git | Low | Critical | ctfd-secrets.yaml gitignored; secret only exists in K8s; documented in runbook |
-| NGINX TCP ConfigMap port conflicts (Pwn/Misc) | Medium | Medium | Ports allocated sequentially from 30000+ by bulk_spawn; conflict check built in |
+| NGINX TCP ConfigMap port conflicts (Pwn/Misc) | Medium | Medium | Ports allocated sequentially from 30000+ — **must be generated sequentially** (race condition validated: parallel generation produced 43/100 entries). Single-threaded Python generator + single kubectl patch |
+| DO Load Balancer 40 forwarding-rule limit | High | High | Each TCP challenge port uses one LB forwarding rule. Up to 10 TCP challenges (5 pwn + 5 misc) × 50 teams = 500 rules; at 100 teams = 1,000 rules. **Already exceeded at 50 teams.** Current workaround: NodePort services with direct node IP access bypass the LB entirely for TCP traffic. NGINX TCP ConfigMap still used for port mapping but LB only forwards HTTP/HTTPS. |
 | cert-manager rate limit hit during testing | Medium | Low | Use letsencrypt-staging ClusterIssuer for all tests; switch to prod only for event |
-| Team count exceeds 50 (late additions) | Low | Medium | DOKS auto-scale enabled (min=3, max=5); 5th node adds ~8GB RAM in ~5 minutes |
+| Team count exceeds 50 — scales to 100 teams | Medium | High | Phase 7 plan: ProxySQL, dedicated MySQL node, 8-10 CTFd replicas, larger nodes. Requires infrastructure changes |
+| p95 latency exceeds 3s under full 200-VU load | High | Medium | **Validated:** p95 ~10s at 200 VUs with current stack. Root cause: MySQL single-writer bottleneck. Phase 7 ProxySQL connection pooling expected to reduce to <3s |
 | bulk_spawn.py partial failure (some pods not created) | Medium | Medium | Script is idempotent — safe to re-run; prints clear created/skipped/failed per pod |
 | Controller FastAPI crashes during event | Low | Medium | Pods keep running independently — only Start/Stop/status affected; restart is instant |
+| CTFd token auth fails silently (302 redirect) | Medium | Medium | **Validated:** CTFd requires `Content-Type: application/json` on ALL requests using token auth, including GETs. Fixed in import_flags.py |
 
 ---
 
-## 17. Glossary
+## 18. Glossary
 
 | Term | Definition |
 |---|---|
