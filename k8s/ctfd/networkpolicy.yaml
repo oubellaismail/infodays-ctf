@@ -209,3 +209,109 @@ spec:
       protocol: TCP
   policyTypes:
   - Ingress
+---
+# MySQL replica: allow egress to primary for replication + DNS
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-replica-egress-primary
+  namespace: ctfd
+spec:
+  podSelector:
+    matchLabels:
+      app: mysql-replica
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: mysql
+    ports:
+    - protocol: TCP
+      port: 3306
+  policyTypes:
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-replica-egress-dns
+  namespace: ctfd
+spec:
+  podSelector:
+    matchLabels:
+      app: mysql-replica
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  policyTypes:
+  - Egress
+---
+# MySQL replica: allow ingress from ProxySQL (read queries)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-proxysql-ingress-replica
+  namespace: ctfd
+spec:
+  podSelector:
+    matchLabels:
+      app: mysql-replica
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: proxysql
+    ports:
+    - port: 3306
+      protocol: TCP
+  policyTypes:
+  - Ingress
+---
+# ProxySQL: allow egress to mysql-replica (read queries)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-proxysql-egress-replica
+  namespace: ctfd
+spec:
+  podSelector:
+    matchLabels:
+      app: proxysql
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: mysql-replica
+    ports:
+    - protocol: TCP
+      port: 3306
+  policyTypes:
+  - Egress
+---
+# MySQL primary: allow ingress from replica (replication)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-replica-ingress-primary
+  namespace: ctfd
+spec:
+  podSelector:
+    matchLabels:
+      app: mysql
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: mysql-replica
+    ports:
+    - port: 3306
+      protocol: TCP
+  policyTypes:
+  - Ingress

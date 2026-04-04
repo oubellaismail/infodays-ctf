@@ -33,6 +33,10 @@ spec:
           value: mysql+pymysql://ctfd:$(MYSQL_PASSWORD)@proxysql:6033/ctfd
         - name: REDIS_URL
           value: redis://redis:6379
+        - name: CACHE_TYPE
+          value: redis
+        - name: CACHE_REDIS_URL
+          value: redis://redis:6379
         - name: SECRET_KEY
           valueFrom:
             secretKeyRef:

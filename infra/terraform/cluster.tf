@@ -13,7 +13,9 @@ resource "digitalocean_kubernetes_cluster" "infodays" {
   node_pool {
     name       = "infodays-workers"
     size       = var.node_size
-    node_count = var.node_count
+    auto_scale = true
+    min_nodes  = var.node_min
+    max_nodes  = var.node_max
     labels = {
       role = "worker"
     }

@@ -117,10 +117,14 @@ terraform -chdir=infra/terraform apply -auto-approve
 kubectl apply -f k8s/ctfd/secrets.local.yaml   # ALWAYS apply secrets separately first
 kubectl apply -f k8s/ctfd/services.yaml
 kubectl apply -f k8s/ctfd/mysql-statefulset.yaml
+kubectl apply -f k8s/ctfd/mysql-replica-statefulset.yaml
+kubectl apply -f k8s/ctfd/proxysql-configmap.yaml
+kubectl apply -f k8s/ctfd/proxysql-deployment.yaml
 kubectl apply -f k8s/ctfd/redis-deployment.yaml
 kubectl apply -f k8s/ctfd/networkpolicy.yaml
 kubectl apply -f k8s/ctfd/deployment.yaml
 kubectl apply -f k8s/ctfd/ingress.yaml
+bash scripts/setup-mysql-replication.sh          # Configure GTID replication
 
 # Configure CTFd and import teams
 CTFD_URL=https://ctfd.infodays.net bash scripts/setup-ctfd.sh
@@ -209,10 +213,19 @@ bash scripts/deploy-challenge.sh challenges/manifests/<id>.yaml
 - All API calls in import_flags.py, scripts, and k6 tests must include this header
 
 ### Resource Sizing (validated under 200-VU load)
-- CTFd: 5 replicas, 4 workers each, 2Gi memory limit, 1000m CPU request
-- MySQL: 1 replica, 2Gi memory limit, max-connections=500, innodb-buffer-pool-size=512MB
-- Node pool: 5 × s-4vcpu-8gb
-- Known bottleneck: MySQL single-writer throughput → p95 ~10s at 200 VUs. Phase 7 adds ProxySQL.
+- CTFd: 5 replicas, 4 gevent workers each, 2Gi memory limit, 1000m CPU request, CACHE_TYPE=redis
+- MySQL primary: 1 replica, 4Gi memory limit, max-connections=500, GTID replication enabled
+- MySQL read replica: 1 replica, 2Gi memory limit, super-read-only, serves all SELECT queries
+- ProxySQL: 2 replicas, read/write splitting (hostgroup 0=writer, 1=reader), max_connections=200 per backend
+- Controller API: 4 replicas, 4 uvicorn workers each, 1Gi memory limit, 5s status cache TTL
+- Node pool: autoscaling 3–8 × s-4vcpu-8gb
+
+### MySQL Replication
+- GTID-based replication: primary (mysql-0) → replica (mysql-replica-0)
+- Setup script: `bash scripts/setup-mysql-replication.sh` (idempotent)
+- ProxySQL `mysql_replication_hostgroups` auto-shuns replica if it falls behind
+- SELECT queries → replica (hostgroup 1), writes → primary (hostgroup 0)
+- SELECT ... FOR UPDATE → primary (write-intent reads must not hit replica)
 
 ### TCP Port Map Generation
 - tcp-services ConfigMap entries MUST be generated sequentially (not in parallel threads)

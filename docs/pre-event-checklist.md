@@ -107,7 +107,15 @@ Do NOT open the event until every item in the Ops Readiness section is checked.
 
 - [ ] ProxySQL backends healthy (not SHUNNED)
   `kubectl exec -n ctfd deployment/proxysql -- mysql -h127.0.0.1 -P6032 -uadmin -padmin -e "SELECT hostgroup, srv_host, status, ConnUsed FROM stats.stats_mysql_connection_pool;"`
-  Expected: status = ONLINE for mysql.ctfd.svc.cluster.local:3306; NOT SHUNNED
+  Expected: TWO entries — hostgroup 0 (writer, mysql) and hostgroup 1 (reader, mysql-replica), both ONLINE; NOT SHUNNED
+
+- [ ] MySQL replication running and caught up
+  `kubectl exec -n ctfd mysql-replica-0 -- mysql -uroot -p"$(kubectl get secret ctfd-secrets -n ctfd -o jsonpath='{.data.MYSQL_ROOT_PASSWORD}' | base64 -d)" -e "SHOW REPLICA STATUS\G" 2>/dev/null | grep -E "Replica_IO_Running|Replica_SQL_Running|Seconds_Behind"`
+  Expected: Replica_IO_Running=Yes, Replica_SQL_Running=Yes, Seconds_Behind_Source=0 (or <5)
+
+- [ ] Node pool autoscaler active
+  `doctl kubernetes cluster node-pool get infodays-ctf infodays-workers --format AutoScale,MinNodes,MaxNodes,Count`
+  Expected: AutoScale=true, MinNodes=3, MaxNodes=8
 
 ---
 

@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql-replica
+  namespace: ctfd
+spec:
+  serviceName: mysql-replica
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql-replica
+  template:
+    metadata:
+      labels:
+        app: mysql-replica
+    spec:
+      initContainers:
+      # Wait for primary to be ready before starting replica
+      - name: wait-for-primary
+        image: busybox
+        command:
+        - sh
+        - -c
+        - until nc -z mysql 3306; do echo waiting for mysql primary; sleep 2; done
+      containers:
+      - name: mysql
+        image: mysql:8
+        args:
+        - --max-connections=500
+        - --innodb-buffer-pool-size=1073741824
+        - --server-id=2
+        - --gtid-mode=ON
+        - --enforce-gtid-consistency=ON
+        - --relay-log=relay-bin
+        - --log-bin=mysql-bin
+        - --log-replica-updates=ON
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ctfd-secrets
+              key: MYSQL_ROOT_PASSWORD
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ctfd-secrets
+              key: MYSQL_PASSWORD
+        - name: MYSQL_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: ctfd-secrets
+              key: MYSQL_DATABASE
+        ports:
+        - containerPort: 3306
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 2000m
+            memory: 2Gi
+          requests:
+            cpu: 500m
+            memory: 1Gi
+        volumeMounts:
+        - name: mysql-replica-data
+          mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+  - metadata:
+      name: mysql-replica-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: do-block-storage
+      resources:
+        requests:
+          storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-replica
+  namespace: ctfd
+spec:
+  type: ClusterIP
+  selector:
+    app: mysql-replica
+  ports:
+  - port: 3306
+    targetPort: 3306
+    protocol: TCP

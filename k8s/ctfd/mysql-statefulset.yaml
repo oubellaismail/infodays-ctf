@@ -20,6 +20,11 @@ spec:
         args:
         - --max-connections=500
         - --innodb-buffer-pool-size=2147483648
+        - --server-id=1
+        - --log-bin=mysql-bin
+        - --binlog-format=ROW
+        - --gtid-mode=ON
+        - --enforce-gtid-consistency=ON
         env:
         - name: MYSQL_ROOT_PASSWORD
           valueFrom:

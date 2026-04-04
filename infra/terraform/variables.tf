@@ -45,10 +45,16 @@ variable "node_size" {
   description = "Node pool droplet size (Phase 7: 5 × s-4vcpu-8gb general pool for 50-team support)"
 }
 
-variable "node_count" {
+variable "node_min" {
   type        = number
-  default     = 5
-  description = "Number of nodes in the pool (Phase 7: 5 nodes for 50-team / 200-VU support)"
+  default     = 3
+  description = "Minimum nodes in autoscaling pool (scales down during quiet periods)"
+}
+
+variable "node_max" {
+  type        = number
+  default     = 8
+  description = "Maximum nodes in autoscaling pool (scales up for event peak / surprise load)"
 }
 
 variable "registry_name" {

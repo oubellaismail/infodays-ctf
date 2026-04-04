@@ -43,13 +43,21 @@ data:
         multiplexing=true
     }
 
+    # Hostgroup 0 = writer (primary), Hostgroup 1 = reader (replica)
     mysql_servers =
     (
         {
             address="mysql.ctfd.svc.cluster.local"
             port=3306
             hostgroup=0
-            max_connections=25
+            max_connections=200
+            weight=1000
+        },
+        {
+            address="mysql-replica.ctfd.svc.cluster.local"
+            port=3306
+            hostgroup=1
+            max_connections=200
             weight=1000
         }
     )
@@ -65,13 +73,42 @@ data:
         }
     )
 
+    # Read/write splitting rules:
+    # Rule 1: SELECT ... FOR UPDATE → writer (hostgroup 0) — these are write-intent reads
+    # Rule 2: All other SELECT → reader (hostgroup 1)
+    # Rule 3: Everything else (INSERT, UPDATE, DELETE) → writer (hostgroup 0)
     mysql_query_rules =
     (
         {
             rule_id=1
             active=1
+            match_pattern="^SELECT.*FOR UPDATE"
+            destination_hostgroup=0
+            apply=1
+        },
+        {
+            rule_id=2
+            active=1
+            match_pattern="^SELECT"
+            destination_hostgroup=1
+            apply=1
+        },
+        {
+            rule_id=3
+            active=1
             match_pattern=".*"
             destination_hostgroup=0
             apply=1
+        }
+    )
+
+    # Replication hostgroups: ProxySQL monitors read_only flag and auto-shuns
+    # a replica that falls behind or gets promoted to writer.
+    mysql_replication_hostgroups =
+    (
+        {
+            writer_hostgroup=0
+            reader_hostgroup=1
+            comment="primary-replica split"
         }
     )
