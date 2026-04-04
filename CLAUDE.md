@@ -4,14 +4,14 @@ Auto-generated from all feature plans. Last updated: 2026-04-02
 
 ## Active Technologies
 - HCL (Terraform ≥1.5) for any Terraform additions; YAML (Kubernetes manifests); Bash (setup script); Python 3.11+ (import script) + `digitalocean` Terraform provider v2.x (already present); Kubernetes manifest files applied via `kubectl`; CTFd image `ctfd/ctfd:latest`; MySQL 8 image `mysql:8`; Redis 7 image `redis:7-alpine` (002-ctfd-platform-stack)
-- MySQL 8 StatefulSet with 10 Gi PVC on `do-block-storage` StorageClass; Redis ephemeral (no PVC) (002-ctfd-platform-stack)
+- MySQL 8 StatefulSet with 10 Gi PVC on `do-block-storage` StorageClass; Redis 7 StatefulSet with 1Gi PVC + AOF persistence (002-ctfd-platform-stack)
 - Bash 5 (scripts), Dockerfile (BuildKit ≥ 1.4), Python 3.11 (web + misc examples), C11 (pwn binary) + Alpine Linux 3.19 (web, misc runtime), Ubuntu 22.04 (pwn runtime), socat 1.7 (pwn + misc), Flask 3.x (web example), Python 3.11-alpine (misc) (004-base-images-docr)
 - N/A for service images; `challenge.zip` artifact written to host `./dist/` via BuildKit `--output` for static builder (004-base-images-docr)
 - YAML (Kubernetes manifests), Bash 5 (test runner) + Kubernetes NetworkPolicy API, PSS admission controller (built-in), RBAC API (built-in), Cilium CNI (DOKS), `kubectl` (005-network-hardening-isolation)
 - Bash 5 (backup script), k6 JavaScript ESM (load test) + k6 (load test runtime), kubectl + kubeconfig (backup + checklist), mysqldump (inside MySQL pod) (006-event-readiness-runbook)
 - `backups/` (local host, SQL dumps), `tests/load/results/` (local host, JSON run summaries) (006-event-readiness-runbook)
 - HCL (Terraform ≥1.5), YAML (Kubernetes manifests), Bash 5 (scripts), JavaScript ESM (k6 load tests) + Terraform `digitalocean` provider v2.x, `helm` provider v2.x, ProxySQL 2.x, kubectl, k6 (007-100-team-scaling)
-- MySQL 8 (StatefulSet, 10Gi PVC on `do-block-storage`), Redis 7 (ephemeral) (007-100-team-scaling)
+- MySQL 8 (StatefulSet, 10Gi PVC on `do-block-storage`), Redis 7 (StatefulSet, 1Gi PVC on `do-block-storage`, AOF persistence) (007-100-team-scaling)
 
 - Python 3.11+; `kubernetes` official Python client; `fastapi`; `uvicorn`; `httpx`; `pydantic` v2; `pytest` (003-challenge-controller-pod-lifecycle)
 - Controller API: FastAPI (not Flask/Django) — single uvicorn worker, stateless, K8s annotations as lifecycle state (003-challenge-controller-pod-lifecycle)
@@ -212,12 +212,13 @@ bash scripts/deploy-challenge.sh challenges/manifests/<id>.yaml
 - Without it, CTFd's `tokens()` middleware skips auth processing and returns 302 redirect to login
 - All API calls in import_flags.py, scripts, and k6 tests must include this header
 
-### Resource Sizing (validated under 200-VU load)
+### Resource Sizing (validated under 200-VU load, 0.00% error rate)
 - CTFd: 5 replicas, 4 gevent workers each, 2Gi memory limit, 1000m CPU request, CACHE_TYPE=redis
 - MySQL primary: 1 replica, 4Gi memory limit, max-connections=500, GTID replication enabled
-- MySQL read replica: 1 replica, 2Gi memory limit, super-read-only, serves all SELECT queries
+- MySQL read replica: 1 replica, 2Gi memory limit, super-read-only enabled via SQL after replication starts (NOT as container arg — blocks Docker init)
 - ProxySQL: 2 replicas, read/write splitting (hostgroup 0=writer, 1=reader), max_connections=200 per backend
-- Controller API: 4 replicas, 4 uvicorn workers each, 1Gi memory limit, 5s status cache TTL
+- Controller API: **8 replicas, 8 uvicorn workers each**, 1Gi memory limit, 250m CPU request (IO-bound), 5s status cache TTL
+- Redis: **StatefulSet** with 1Gi PVC on do-block-storage, AOF persistence (appendonly yes, appendfsync everysec)
 - Node pool: autoscaling 3–8 × s-4vcpu-8gb
 
 ### MySQL Replication
@@ -236,6 +237,15 @@ bash scripts/deploy-challenge.sh challenges/manifests/<id>.yaml
 - Standard Kubernetes NetworkPolicy cannot target kube-apiserver on DOKS (Cilium CNI)
 - Controller needs `CiliumNetworkPolicy` with `toEntities: [kube-apiserver]` for K8s API access
 - ClusterRole + ClusterRoleBinding needed for node listing (NodePort discovery)
+
+### HTTP Challenge Isolation (nginx auth_request)
+- All HTTP challenge Ingresses carry two nginx annotations:
+  - `auth-url: http://ctfd-service.ctfd.svc.cluster.local/team-verify?host=$host` — server-side auth sub-request
+  - `auth-signin: https://ctfd.infodays.net/login` — redirect destination on 401
+- CTFd plugin exposes `/team-verify`: parses `team-{id}-{challenge}` from `?host=`, returns 200/401/403
+- **SESSION_COOKIE_DOMAIN must be `.infodays.net`** (not `ctfd.infodays.net`) so the session cookie is sent to `*.challenges.infodays.net`. Set in `load(app)` as `app.config["SESSION_COOKIE_DOMAIN"] = ".infodays.net"` — Flask ignores the env var, it must be set in app config.
+- After changing SESSION_COOKIE_DOMAIN, run `kubectl exec -n ctfd redis-0 -- redis-cli FLUSHDB` to clear old-domain cookies that cause login loops.
+- **TCP challenges (nc)** are NOT isolated by URL — NodePort bypasses nginx. Isolation is cryptographic only (HMAC flags unique per team).
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

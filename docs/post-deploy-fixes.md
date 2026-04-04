@@ -257,10 +257,87 @@ kubectl exec -n ctfd deployment/ctfd -- env | grep CTF_MASTER_SECRET
 |-----|-----|-----|-----|------------|-------|
 | Pre-scaling (run 4) | 200 | 2.87s | 8.77s | 0.04% | Status cache, CTFd probes fixed |
 | Post-scaling (run 5) | 200 | 3.97s | 11.57s | 0.01% ✓ | Replica + Redis + autoscaler |
+| Controller bottleneck (run 6) | 200 | 4.1s | 12.26s | 0.25% | 92 activate failures — 4 replicas × 4 workers insufficient |
+| 8×8 controller (run 7) | 200 | 3.9s | 11.88s | 0.00% ✓ | Activate failures 92→3, status failures 46→0 |
 
-**p95 note:** p95 rose due to 62 login failures (24%) during the 50s VU ramp — new pods were still initialising when the test started. Subsequent iterations had no errors. The `activate` endpoint is the dominant p95 contributor (K8s API roundtrip is inherently ~1-3s). Error rate is now ≤0.01% which meets the <1% threshold.
+**p95 note:** p95 ~11-12s is expected — `activate` K8s API roundtrip (pod scale-up) is inherently 1-3s per call. Error rate is the critical threshold: ≤0.01% meets the <1% SLO.
 
-**ProxySQL query distribution (run 5):** 380K reads → replica, 103K writes → primary; 0 ConnERR.
+**ProxySQL query distribution (run 5):** 380K reads → replica (78%), 103K writes → primary (22%); 0 ConnERR. Replication lag held at 0s throughout 45-min test.
+
+---
+
+## Fix 11 — Controller bottleneck at 200 VUs (activate failures)
+
+**Symptom (run 6):** 92 `activate` failures and 46 `status` timeouts. Controller API returned 503/504 under sustained load.
+
+**Root cause:** Controller was running 4 replicas × 4 uvicorn workers. The `/activate` endpoint calls the K8s API synchronously (replicas patch + annotation write), which can take 1-3s each. At 200 VUs all activating simultaneously, the 16-worker pool saturated.
+
+**Fix:** Scaled controller to 8 replicas × 8 workers. Updated `k8s/controller/api-deployment.yaml` (`replicas: 8`, CPU request `250m`) and rebuilt controller image with `--workers 8`. The controller is IO-bound (K8s API calls), not CPU-bound — more workers help more than bigger CPU limits.
+
+```bash
+kubectl apply -f k8s/controller/api-deployment.yaml
+kubectl rollout status deployment/controller-api -n ctfd
+```
+
+**Result (run 7):** Activate failures 92→3, status failures 46→0. Error rate 0.25%→0.00%.
+
+---
+
+## Fix 12 — Redis data lost on pod restart (ephemeral volume)
+
+**Symptom:** After a Redis pod restart (OOM, node drain, etc.), all CTFd sessions were invalidated — every team member was logged out. Redis cache was also cleared, causing a thundering herd on MySQL from all CTFd replicas.
+
+**Root cause:** Redis was deployed as a `Deployment` with an `emptyDir` volume. All data is lost when the pod restarts.
+
+**Fix:** Converted Redis to a `StatefulSet` with:
+- 1Gi PVC on `do-block-storage` (`redis-data-redis-0`)
+- AOF persistence (`--appendonly yes --appendfsync everysec`)
+- Headless Service (`serviceName: redis`)
+
+```bash
+kubectl apply -f k8s/ctfd/redis-deployment.yaml
+kubectl rollout status statefulset/redis -n ctfd
+kubectl get pvc redis-data-redis-0 -n ctfd
+```
+
+**Session continuity caveat:** If the PVC is deleted (e.g., full cluster destroy), all sessions are cleared and teams must re-login. This is expected behavior.
+
+---
+
+## Fix 13 — HTTP challenge isolation: team-B could access team-A's challenge URL
+
+**Symptom:** Visiting `https://team-1-web-sqli.challenges.infodays.net/` while logged in as team-2 showed team-1's running challenge instance. No authentication enforced at the URL layer.
+
+**Root cause:** HTTP challenge Ingresses had no auth. Any authenticated CTFd user could access any team's challenge URL directly.
+
+**Fix:** Two-part solution:
+
+**Part A — nginx `auth_request` on all HTTP challenge Ingresses**
+
+Added annotations to all HTTP Ingresses (set in `bulk_spawn.py` for new challenges; re-patched all existing 350 Ingresses manually):
+```yaml
+nginx.ingress.kubernetes.io/auth-url: "http://ctfd-service.ctfd.svc.cluster.local/team-verify?host=$host"
+nginx.ingress.kubernetes.io/auth-signin: "https://ctfd.infodays.net/login"
+```
+nginx sends a sub-request to `/team-verify` before proxying. 200 → allow, 401 → redirect to login, 403 → deny.
+
+**Part B — `/team-verify` endpoint in CTFd plugin**
+
+Added to `ctfd-plugin/__init__.py`:
+- Parses `team-{id}-{challenge}` from the `?host=` query parameter (nginx passes `$host`)
+- Returns 200 if logged-in team's ID matches the URL's team ID
+- Admins always get 200
+- Not-logged-in users get 401 (→ nginx redirects to login page)
+
+**Part C — `SESSION_COOKIE_DOMAIN = ".infodays.net"` in Flask app config**
+
+The CTFd session cookie was scoped to `ctfd.infodays.net`. Browsers don't send it to `*.challenges.infodays.net`, so `/team-verify` always got 401 (no session). Fixed by setting `app.config["SESSION_COOKIE_DOMAIN"] = ".infodays.net"` inside the plugin `load(app)` function. Flask ignores the `SESSION_COOKIE_DOMAIN` env var — it must be set in the app config.
+
+**Post-fix gotcha — login loop:** After changing the cookie domain, browsers have both an old `ctfd.infodays.net`-scoped cookie and a new `.infodays.net`-scoped one. Flask reads the domain-specific one (higher priority), finds no valid session, redirects to login — infinite loop.
+
+**Resolution:** `kubectl exec -n ctfd redis-0 -- redis-cli FLUSHDB` to invalidate all old sessions. Teams clear browser cookies and re-login once.
+
+**TCP challenges:** NodePort traffic bypasses nginx ingress entirely — `auth_request` does NOT apply to `nc` challenges. Isolation is enforced cryptographically (HMAC flags unique per team). Cross-team flag submission is rejected and logged to the `cheaters` table.
 
 ---
 
