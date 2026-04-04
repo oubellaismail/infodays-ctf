@@ -260,6 +260,8 @@ def create_http_ingress(net_v1: Any, team_id: str, challenge: dict) -> str:
             annotations={
                 "cert-manager.io/cluster-issuer": "letsencrypt-prod",
                 "nginx.ingress.kubernetes.io/ssl-redirect": "true",
+                "nginx.ingress.kubernetes.io/auth-url": "http://ctfd-service.ctfd.svc.cluster.local/team-verify?host=$host",
+                "nginx.ingress.kubernetes.io/auth-signin": "https://ctfd.infodays.net/login",
             },
         ),
         spec=V1IngressSpec(

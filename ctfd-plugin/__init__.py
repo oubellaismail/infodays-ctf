@@ -122,6 +122,10 @@ def load(app):
     """Load the CTFd plugin."""
     from CTFd.utils.plugins import register_script
 
+    # Extend session cookie to all subdomains so nginx auth_request on
+    # *.challenges.infodays.net forwards a valid CTFd session cookie.
+    app.config["SESSION_COOKIE_DOMAIN"] = ".infodays.net"
+
     blueprint = Blueprint(
         "controller_plugin",
         __name__,
@@ -213,6 +217,49 @@ def load(app):
             return jsonify({"error": "unauthorized"}), 401
         data = flask_request.get_json(silent=True) or {}
         return _proxy("POST", "/deactivate", data)
+
+    # ── Challenge isolation: nginx auth_request endpoint ─────────────────────
+
+    @blueprint.route("/team-verify")
+    def team_verify():
+        """
+        Called server-side by nginx auth_request before routing to a challenge pod.
+        Verifies the logged-in team owns the requested challenge instance.
+
+        nginx passes the original $host via ?host=<value>.
+        Host format: team-<id>-<challenge>.challenges.infodays.net
+
+        Returns 200 (allow), 401 (not logged in → redirect to login), 403 (wrong team).
+        """
+        from CTFd.utils.user import get_current_user, get_current_team
+
+        user = get_current_user()
+        if not user:
+            return "", 401
+
+        # Admins can access any challenge instance
+        if getattr(user, "type", "") == "admin":
+            return "", 200
+
+        host = flask_request.args.get("host", "")
+        subdomain = host.split(".")[0]        # "team-1-web-sqli"
+        parts = subdomain.split("-")          # ["team", "1", "web", "sqli"]
+
+        if len(parts) < 2 or parts[0] != "team":
+            return "", 403
+
+        try:
+            challenge_team_id = int(parts[1])
+        except ValueError:
+            return "", 403
+
+        team = get_current_team()
+        if not team:
+            return "", 401
+
+        if team.id == challenge_team_id:
+            return "", 200
+        return "", 403
 
     # ── Cheaters admin endpoint ───────────────────────────────────────────────
 
