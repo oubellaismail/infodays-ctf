@@ -29,6 +29,11 @@ Do NOT open the event until every item in the Ops Readiness section is checked.
 
 ## CTFd Platform
 
+- [ ] CTF_MASTER_SECRET is set in CTFd pods (required for flag validation)
+  `kubectl exec -n ctfd deployment/ctfd -- env | grep CTF_MASTER_SECRET`
+  Expected: `CTF_MASTER_SECRET=<value>` — if missing, apply the deployment manifest:
+  `kubectl apply -f k8s/ctfd/deployment.yaml && kubectl rollout restart deployment/ctfd -n ctfd`
+
 - [ ] CTFd loads over HTTPS with valid TLS
   Open `https://ctfd.infodays.net` in a browser
   Expected: page loads, browser shows valid padlock
@@ -56,9 +61,10 @@ Do NOT open the event until every item in the Ops Readiness section is checked.
   `kubectl get deployments -n challenges --no-headers | wc -l`
   Expected: count matches (teams × challenges) total
 
-- [ ] import_flags.py ran — all derived flags present in CTFd
-  `curl -s -H "Authorization: Token $CTFD_ADMIN_TOKEN" https://ctfd.infodays.net/api/v1/flags | jq '.data | length'`
-  Expected: count matches total number of service challenges × teams
+- [ ] import_flags.py ran — one `team` flag row per service challenge in CTFd
+  `curl -s -H "Authorization: Token $CTFD_ADMIN_TOKEN" -H "Content-Type: application/json" https://ctfd.infodays.net/api/v1/flags | jq '[.data[] | select(.type=="team")] | length'`
+  Expected: count equals number of service challenges (e.g., 3 for web-sqli, pwn-bof, misc-riddle)
+  Note: type is `team` (not `static`) — one row covers all 50 teams via HMAC derivation
 
 - [ ] Sample end-to-end test: activate one Web, one Pwn, one Misc instance for team-999
   `curl -X POST http://controller-api.ctfd.svc.cluster.local:80/activate -H "X-Controller-Key: $CONTROLLER_KEY" -d '{"team_id":999,"challenge_id":"test-web-1"}'`
@@ -71,6 +77,13 @@ Do NOT open the event until every item in the Ops Readiness section is checked.
 - [ ] Sample flag submission through CTFd UI accepted correctly
   Log in as team-999, go to challenge [TEST] Web 1, submit the FLAG value from above
   Expected: CTFd shows "Correct!"
+
+- [ ] Cross-team flag rejection verified (security check)
+  Log in as team-1, get their FLAG env var for any challenge
+  Log in as team-2 (different account), submit team-1's flag for the same challenge
+  Expected: CTFd shows "Incorrect" — cross-team flag cryptographically rejected
+  Then check: `curl -s -H "Authorization: Token $CTFD_ADMIN_TOKEN" https://ctfd.infodays.net/admin/cheaters | jq .`
+  Expected: cheaters table contains an entry for this cross-team attempt
 
 - [ ] 4-pod cap verified: 5th activation returns correct error
   Activate 4 challenges for team-999, then attempt a 5th
@@ -91,6 +104,10 @@ Do NOT open the event until every item in the Ops Readiness section is checked.
 - [ ] Controller API rejects requests without valid X-Controller-Key header
   `kubectl port-forward -n ctfd svc/controller-api 18080:80 &amp; sleep 1 &amp;&amp; curl -s -o /dev/null -w "%{http_code}" http://localhost:18080/status/0 -H "X-Controller-Key: wrongkey"; kill %1`
   Expected: HTTP 401
+
+- [ ] ProxySQL backends healthy (not SHUNNED)
+  `kubectl exec -n ctfd deployment/proxysql -- mysql -h127.0.0.1 -P6032 -uadmin -padmin -e "SELECT hostgroup, srv_host, status, ConnUsed FROM stats.stats_mysql_connection_pool;"`
+  Expected: status = ONLINE for mysql.ctfd.svc.cluster.local:3306; NOT SHUNNED
 
 ---
 

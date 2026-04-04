@@ -104,89 +104,84 @@ def fetch_existing_flags(ctfd_url: str, admin_token: str, challenge_id: int) -> 
         raise
 
 
-def import_flag(ctfd_url: str, admin_token: str, team_id: str, challenge: dict, challenge_id_map: dict) -> str:
+def import_flag(ctfd_url: str, admin_token: str, challenge: dict, challenge_id_map: dict) -> str:
     """
-    Import one derived flag into CTFd.
+    Import one team-bound flag entry per challenge into CTFd.
 
-    Args:
-        ctfd_url: Base URL of CTFd instance
-        admin_token: CTFd admin API token
-        team_id: Team identifier
-        challenge: Challenge manifest dict with 'id' and 'name' fields
-        challenge_id_map: Mapping of challenge name → ctfd_id
+    Uses the custom 'team' flag type registered by the controller-plugin.
+    CTFd validates on the fly: HMAC(CTF_MASTER_SECRET, "{team_id}:{manifest_id}")[:32]
+    Cross-team flag submission is cryptographically rejected — one row covers all teams.
+
+    Flag row:
+        type    = "team"
+        content = "team-derived"   (placeholder, not used for validation)
+        data    = challenge manifest ID  e.g. "pwn-bof"
 
     Returns:
         "created" or "skipped"
     """
-    # Look up CTFd challenge ID by manifest name
     challenge_name = challenge.get("name", "")
+    challenge_manifest_id = challenge["id"]
     ctfd_challenge_id = challenge_id_map.get(challenge_name)
 
     if not ctfd_challenge_id:
         logger.warning(f"Challenge not found in CTFd: {challenge_name}")
         return "skipped"
 
-    # Derive flag
-    flag_str = derive_flag(str(team_id), challenge["id"])
-
-    # Check if flag already exists
+    # Skip if a team flag already exists for this challenge
     existing_flags = fetch_existing_flags(ctfd_url, admin_token, ctfd_challenge_id)
-    if flag_str in existing_flags:
-        logger.info(f"Skipped (exists): {flag_str[:20]}... for team {team_id}")
+    if "team-derived" in existing_flags:
+        logger.info(f"Skipped (team flag exists): {challenge_name}")
         return "skipped"
 
-    # Import flag
     url = f"{ctfd_url}/api/v1/flags"
     headers = {"Authorization": f"Token {admin_token}", "Content-Type": "application/json"}
     body = {
         "challenge_id": ctfd_challenge_id,
-        "type": "static",
-        "content": flag_str,
-        "data": "",
+        "type": "team",
+        "content": "team-derived",
+        "data": challenge_manifest_id,
     }
 
     try:
         response = httpx.post(url, headers=headers, json=body)
         response.raise_for_status()
-        logger.info(f"Created flag: {flag_str[:20]}... for team {team_id}")
+        logger.info(f"Created team flag: {challenge_name} (manifest: {challenge_manifest_id})")
         return "created"
     except Exception as e:
-        logger.error(f"Failed to import flag for team {team_id}: {e}")
+        logger.error(f"Failed to import flag for challenge {challenge_name}: {e}")
         raise
 
 
 def main(ctfd_url: str, admin_token: str) -> None:
     """Entry point for flag import workflow."""
-    logger.info("Starting flag import...")
+    logger.info("Starting flag import (team-bound mode)...")
 
-    # Validate env var
+    # CTF_MASTER_SECRET must be set — used at validation time by CTFd, not here
     if not os.getenv("CTF_MASTER_SECRET"):
         raise ValueError("CTF_MASTER_SECRET env var not set")
 
-    # Fetch teams and challenges
-    teams = fetch_teams(ctfd_url, admin_token)
     challenge_id_map = fetch_challenges(ctfd_url, admin_token)
 
-    # Load service-challenge manifests
-    challenges = [c for c in load_manifests() if c["category"] in {"web", "pwn", "misc"}]
+    # All service challenges need per-team derived flags
+    challenges = [c for c in load_manifests() if c["category"] in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}]
     logger.info(f"Loaded {len(challenges)} service challenges")
 
-    # Import flags for each team × challenge pair
+    # One team flag row per challenge — no team loop needed
     created = 0
     skipped = 0
     errors = 0
 
-    for team in teams:
-        for challenge in challenges:
-            try:
-                result = import_flag(ctfd_url, admin_token, team["id"], challenge, challenge_id_map)
-                if result == "created":
-                    created += 1
-                elif result == "skipped":
-                    skipped += 1
-            except Exception as e:
-                logger.error(f"Error importing flag for {team['id']}/{challenge['id']}: {e}")
-                errors += 1
+    for challenge in challenges:
+        try:
+            result = import_flag(ctfd_url, admin_token, challenge, challenge_id_map)
+            if result == "created":
+                created += 1
+            elif result == "skipped":
+                skipped += 1
+        except Exception as e:
+            logger.error(f"Error importing flag for {challenge['id']}: {e}")
+            errors += 1
 
     logger.info(f"Done: {created} created, {skipped} skipped, {errors} errors")
 

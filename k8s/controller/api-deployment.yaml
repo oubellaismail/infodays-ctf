@@ -6,7 +6,7 @@ metadata:
   labels:
     app: controller-api
 spec:
-  replicas: 2
+  replicas: 4
   selector:
     matchLabels:
       app: controller-api
@@ -21,7 +21,7 @@ spec:
       containers:
       - name: controller-api
         image: registry.digitalocean.com/infodays-registry/base:controller-api
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         ports:
         - containerPort: 5000
           name: http
@@ -38,23 +38,26 @@ spec:
               key: CONTROLLER_KEY
         resources:
           limits:
+            cpu: "2000m"
+            memory: "1Gi"
+          requests:
             cpu: "500m"
             memory: "512Mi"
-          requests:
-            cpu: "100m"
-            memory: "256Mi"
         livenessProbe:
           httpGet:
             path: /health
             port: 5000
-          initialDelaySeconds: 10
-          periodSeconds: 15
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /health
             port: 5000
           initialDelaySeconds: 5
           periodSeconds: 5
+          timeoutSeconds: 3
         volumeMounts:
         - name: challenge-manifests
           mountPath: /app/challenges/manifests

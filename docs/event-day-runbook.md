@@ -57,6 +57,22 @@ kubectl rollout restart deployment/team-{id}-{challenge-id} -n challenges
 
 Replace `{id}` with the numeric team ID and `{challenge-id}` with the challenge ID (e.g., `team-3-web-sqli`).
 
+### Check for cheating (cross-team flag submission)
+
+The platform cryptographically prevents cross-team flag acceptance, but logs all attempts to a
+`cheaters` table for post-event review.
+
+```bash
+curl -s -H "Authorization: Token $CTFD_ADMIN_TOKEN" \
+  https://ctfd.infodays.net/admin/cheaters | jq .
+```
+
+Fields returned: `submitting_team`, `submitting_team_id`, `submitted_flag`, `owner_team`,
+`owner_team_id`, `challenge`, `submitted_at`.
+
+An entry here means the team submitted a flag that was cryptographically matched to another team.
+The submission was **rejected** (returned False). Log this for integrity review after the event.
+
 ### Force-suspend a team's pod (admin action)
 
 ```bash

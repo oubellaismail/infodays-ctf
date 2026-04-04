@@ -1,0 +1,7 @@
+id: reversing-vm
+name: "Reversing VM"
+category: reversing
+image: registry.digitalocean.com/infodays-registry/base:reversing
+port: 1337
+type: tcp
+points: 400

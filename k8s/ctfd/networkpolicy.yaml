@@ -90,7 +90,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-ctfd-egress-mysql
+  name: allow-ctfd-egress-proxysql
   namespace: ctfd
 spec:
   podSelector:
@@ -100,10 +100,72 @@ spec:
   - to:
     - podSelector:
         matchLabels:
+          app: proxysql
+    ports:
+    - protocol: TCP
+      port: 6033
+  policyTypes:
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-proxysql-ingress-ctfd
+  namespace: ctfd
+spec:
+  podSelector:
+    matchLabels:
+      app: proxysql
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: ctfd
+    ports:
+    - protocol: TCP
+      port: 6033
+  policyTypes:
+  - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-proxysql-egress-mysql
+  namespace: ctfd
+spec:
+  podSelector:
+    matchLabels:
+      app: proxysql
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
           app: mysql
     ports:
     - protocol: TCP
       port: 3306
+  policyTypes:
+  - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-proxysql-egress-dns
+  namespace: ctfd
+spec:
+  podSelector:
+    matchLabels:
+      app: proxysql
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
   policyTypes:
   - Egress
 ---
@@ -126,3 +188,24 @@ spec:
       port: 6379
   policyTypes:
   - Egress
+---
+# Allow ProxySQL ingress to MySQL (Terraform only allows ctfd->mysql ingress)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-proxysql-ingress-mysql
+  namespace: ctfd
+spec:
+  podSelector:
+    matchLabels:
+      app: mysql
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: proxysql
+    ports:
+    - port: 3306
+      protocol: TCP
+  policyTypes:
+  - Ingress

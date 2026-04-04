@@ -1,0 +1,7 @@
+id: forensics-pcap
+name: "Forensics PCAP"
+category: forensics
+image: registry.digitalocean.com/infodays-registry/base:forensics
+port: 8080
+type: http
+points: 200

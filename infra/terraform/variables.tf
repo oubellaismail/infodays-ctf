@@ -42,13 +42,13 @@ variable "cluster_version" {
 variable "node_size" {
   type        = string
   default     = "s-4vcpu-8gb"
-  description = "Node pool droplet size (must not exceed s-4vcpu-8gb per constitution)"
+  description = "Node pool droplet size (Phase 7: 5 × s-4vcpu-8gb general pool for 50-team support)"
 }
 
 variable "node_count" {
   type        = number
   default     = 5
-  description = "Number of nodes in the pool (must not exceed 5 per constitution)"
+  description = "Number of nodes in the pool (Phase 7: 5 nodes for 50-team / 200-VU support)"
 }
 
 variable "registry_name" {

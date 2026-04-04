@@ -408,8 +408,8 @@ def main(ctfd_url: str, admin_token: str) -> None:
     teams = fetch_teams(ctfd_url, admin_token)
     logger.info(f"Fetched {len(teams)} teams")
 
-    # Load challenge manifests (service challenges only)
-    challenges = [c for c in load_manifests() if c["category"] in {"web", "pwn", "misc"}]
+    # Load challenge manifests (all service challenges with per-team pods)
+    challenges = [c for c in load_manifests() if c["category"] in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}]
     logger.info(f"Loaded {len(challenges)} service challenges")
 
     # Submit all (team, challenge) pairs to ThreadPoolExecutor
@@ -425,7 +425,7 @@ def main(ctfd_url: str, admin_token: str) -> None:
                 futures[future] = (team["id"], challenge["id"])
 
         # Collect results as they complete
-        for future in concurrent.futures.as_completed(futures, timeout=30):
+        for future in concurrent.futures.as_completed(futures, timeout=600):
             try:
                 result = future.result()
                 if result["status"] == "created":

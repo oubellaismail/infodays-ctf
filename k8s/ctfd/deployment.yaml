@@ -14,12 +14,12 @@ spec:
         app: ctfd
     spec:
       initContainers:
-      - name: wait-for-mysql
+      - name: wait-for-proxysql
         image: busybox
         command:
         - sh
         - -c
-        - until nc -z mysql 3306; do echo waiting for mysql; sleep 2; done
+        - until nc -z proxysql 6033; do echo waiting for proxysql; sleep 2; done
       containers:
       - name: ctfd
         image: ctfd/ctfd:latest
@@ -30,7 +30,7 @@ spec:
               name: ctfd-secrets
               key: MYSQL_PASSWORD
         - name: DATABASE_URL
-          value: mysql+pymysql://ctfd:$(MYSQL_PASSWORD)@mysql/ctfd
+          value: mysql+pymysql://ctfd:$(MYSQL_PASSWORD)@proxysql:6033/ctfd
         - name: REDIS_URL
           value: redis://redis:6379
         - name: SECRET_KEY
@@ -38,6 +38,11 @@ spec:
             secretKeyRef:
               name: ctfd-secrets
               key: SECRET_KEY
+        - name: CTF_MASTER_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ctfd-secrets
+              key: CTF_MASTER_SECRET
         - name: SERVER_SENT_EVENTS
           value: "false"
         - name: WORKERS
@@ -71,13 +76,17 @@ spec:
             path: /healthcheck
             port: 8000
           initialDelaySeconds: 30
-          periodSeconds: 10
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /healthcheck
             port: 8000
           initialDelaySeconds: 10
-          periodSeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
         resources:
           requests:
             cpu: 1000m

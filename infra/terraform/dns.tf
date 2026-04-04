@@ -29,3 +29,23 @@ resource "digitalocean_record" "challenges_wildcard_a" {
 
   depends_on = [data.kubernetes_service.ingress_nginx_lb]
 }
+
+# Apex A records for TCP challenges: nc challenges.infodays.net <nodeport>
+# Dynamically resolved from cluster nodes via DOKS tag — no hardcoded IPs.
+# Run `terraform apply` after node pool changes to refresh.
+data "digitalocean_droplets" "workers" {
+  filter {
+    key    = "tags"
+    values = ["k8s:${digitalocean_kubernetes_cluster.infodays.id}"]
+    all    = false
+  }
+}
+
+resource "digitalocean_record" "challenges_apex_a" {
+  count  = length(data.digitalocean_droplets.workers.droplets)
+  domain = digitalocean_domain.challenges.name
+  type   = "A"
+  name   = "@"
+  value  = data.digitalocean_droplets.workers.droplets[count.index].ipv4_address
+  ttl    = 60
+}

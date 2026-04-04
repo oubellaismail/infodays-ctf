@@ -19,3 +19,17 @@ resource "digitalocean_kubernetes_cluster" "infodays" {
     }
   }
 }
+
+# Open NodePort range on worker nodes so TCP challenges are reachable from
+# the internet: nc challenges.infodays.net <nodeport>
+# Applied via the k8s:worker tag that DOKS sets on all worker droplets.
+resource "digitalocean_firewall" "nodeport_access" {
+  name = "ctf-challenges-nodeport-access"
+  tags = ["k8s:worker"]
+
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "30000-32767"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+}

@@ -23,7 +23,7 @@
     return; // not logged in or no team
   }
 
-  var SERVICE_CATEGORIES = ["web", "pwn", "misc"];
+  var SERVICE_CATEGORIES = ["web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"];
 
   // Per-challenge state (reset when modal opens)
   var currentChallengeId = null;
@@ -138,13 +138,21 @@
       container.appendChild(btn);
 
       if (challenge && challenge.url) {
-        var urlLink = document.createElement("a");
-        urlLink.href = challenge.url;
-        urlLink.target = "_blank";
-        urlLink.rel = "noopener noreferrer";
-        urlLink.textContent = challenge.url;
-        urlLink.style.marginLeft = "8px";
-        container.appendChild(urlLink);
+        if (challenge.url.startsWith("nc ")) {
+          // TCP challenge: show copyable command, not a link
+          var code = document.createElement("code");
+          code.textContent = challenge.url;
+          code.style.cssText = "margin-left:8px;padding:2px 6px;background:rgba(0,0,0,0.3);border-radius:4px;font-size:0.9em;user-select:all;cursor:text;";
+          container.appendChild(code);
+        } else {
+          var urlLink = document.createElement("a");
+          urlLink.href = challenge.url;
+          urlLink.target = "_blank";
+          urlLink.rel = "noopener noreferrer";
+          urlLink.textContent = challenge.url;
+          urlLink.style.marginLeft = "8px";
+          container.appendChild(urlLink);
+        }
       }
     } else {
       renderUnknown(container);

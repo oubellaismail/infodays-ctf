@@ -3,7 +3,7 @@ import { check, sleep } from 'k6';
 
 // Load test configuration
 // 4 VUs per team account — simulates 4 team members browsing simultaneously.
-// 50 teams × 4 members = 200 VUs total.
+// 50 teams × 4 members = 200 VUs total (Phase 7: 50-team scaling with ProxySQL).
 export const options = {
   vus: 200,
   duration: '45m',
