@@ -19,7 +19,12 @@ spec:
         image: mysql:8
         args:
         - --max-connections=500
-        - --innodb-buffer-pool-size=536870912
+        - --innodb-buffer-pool-size=2147483648
+        - --server-id=1
+        - --log-bin=mysql-bin
+        - --binlog-format=ROW
+        - --gtid-mode=ON
+        - --enforce-gtid-consistency=ON
         env:
         - name: MYSQL_ROOT_PASSWORD
           valueFrom:
@@ -43,6 +48,9 @@ spec:
           protocol: TCP
         resources:
           limits:
+            cpu: 2000m
+            memory: 4Gi
+          requests:
             cpu: 500m
             memory: 2Gi
         volumeMounts:

@@ -1,0 +1,15 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-nodeport-to-challenges
+  namespace: challenges
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  - ports:
+    - port: 1337
+      protocol: TCP
+    - port: 4444
+      protocol: TCP

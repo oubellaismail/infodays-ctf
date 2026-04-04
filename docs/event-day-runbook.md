@@ -57,6 +57,22 @@ kubectl rollout restart deployment/team-{id}-{challenge-id} -n challenges
 
 Replace `{id}` with the numeric team ID and `{challenge-id}` with the challenge ID (e.g., `team-3-web-sqli`).
 
+### Check for cheating (cross-team flag submission)
+
+The platform cryptographically prevents cross-team flag acceptance, but logs all attempts to a
+`cheaters` table for post-event review.
+
+```bash
+curl -s -H "Authorization: Token $CTFD_ADMIN_TOKEN" \
+  https://ctfd.infodays.net/admin/cheaters | jq .
+```
+
+Fields returned: `submitting_team`, `submitting_team_id`, `submitted_flag`, `owner_team`,
+`owner_team_id`, `challenge`, `submitted_at`.
+
+An entry here means the team submitted a flag that was cryptographically matched to another team.
+The submission was **rejected** (returned False). Log this for integrity review after the event.
+
 ### Force-suspend a team's pod (admin action)
 
 ```bash
@@ -77,6 +93,24 @@ Scale back down after load subsides:
 ```bash
 kubectl scale deployment/ctfd -n ctfd --replicas=5
 ```
+
+### Scale controller API under activate/status pressure
+
+Current baseline is 8 replicas. If activate or status calls are failing or slow:
+```bash
+kubectl scale deployment/controller-api -n ctfd --replicas=12
+```
+
+The controller is IO-bound (K8s API calls) — more replicas help more than bigger pods.
+
+### Flush Redis sessions (emergency — forces all users to re-login)
+
+Use this only if you changed `SESSION_COOKIE_DOMAIN` or suspect corrupted session state causing login loops:
+```bash
+kubectl exec -n ctfd redis-0 -- redis-cli FLUSHDB
+```
+
+**Warning:** This invalidates all active sessions. Every logged-in team member will be logged out and must re-login. Avoid during peak competition hours.
 
 ### Extend the event end time
 
@@ -113,12 +147,17 @@ doctl kubernetes cluster kubeconfig save infodays-ctf
 terraform -chdir=infra/terraform apply -target=kubernetes_namespace.cert_manager -target=kubernetes_namespace.ctfd -target=kubernetes_namespace.challenges -target=kubernetes_namespace.monitoring -target=kubernetes_namespace.ingress_nginx -target=helm_release.ingress_nginx -target=helm_release.cert_manager -auto-approve
 terraform -chdir=infra/terraform apply -auto-approve
 
-# 2. Deploy CTFd stack
+# 2. Deploy core CTFd stack — secrets and services first, then stateful components
 kubectl apply -f k8s/ctfd/secrets.local.yaml
 kubectl apply -f k8s/ctfd/services.yaml
 kubectl apply -f k8s/ctfd/mysql-statefulset.yaml
-kubectl apply -f k8s/ctfd/redis-deployment.yaml
+kubectl apply -f k8s/ctfd/redis-deployment.yaml       # StatefulSet with 1Gi PVC + AOF
+kubectl apply -f k8s/ctfd/proxysql-configmap.yaml
+kubectl apply -f k8s/ctfd/proxysql-deployment.yaml
 kubectl apply -f k8s/ctfd/networkpolicy.yaml
+
+# Wait for MySQL primary to be ready before continuing
+kubectl rollout status statefulset/mysql -n ctfd
 
 # 3. Create ConfigMaps from plugin files
 kubectl create configmap ctfd-plugin-init --from-file=__init__.py=ctfd-plugin/__init__.py -n ctfd --dry-run=client -o yaml | kubectl apply -f -
@@ -128,24 +167,36 @@ kubectl create configmap ctfd-plugin-js --from-file=plugin.js=ctfd-plugin/assets
 kubectl apply -f k8s/ctfd/deployment.yaml
 kubectl apply -f k8s/ctfd/ingress.yaml
 
-# 5. Restore MySQL backup
+# 5. Restore MySQL backup to primary
 kubectl cp backups/ctfd-backup-LATEST.sql ctfd/mysql-0:/tmp/restore.sql
 kubectl exec -i mysql-0 -n ctfd -- bash -c 'echo "SET FOREIGN_KEY_CHECKS=0;" | cat - /tmp/restore.sql | mysql -u root -p"$MYSQL_ROOT_PASSWORD" ctfd'
 
-# 6. Deploy controller (create secret with correct key name)
+# 6. Deploy MySQL read replica and configure GTID replication
+kubectl apply -f k8s/ctfd/mysql-replica-statefulset.yaml
+kubectl rollout status statefulset/mysql-replica -n ctfd
+bash scripts/setup-mysql-replication.sh
+# This script: creates repl user on primary (mysql_native_password), seeds replica from primary dump,
+# configures CHANGE REPLICATION SOURCE TO, enables super_read_only on replica, creates ctfd user on replica.
+
+# 7. Deploy controller (create secret with correct key name)
 kubectl create secret generic controller-key --from-literal=CONTROLLER_KEY=<key> -n ctfd
-kubectl apply -f k8s/controller/rbac.yaml
-kubectl apply -f k8s/controller/api-deployment.yaml
+kubectl apply -f k8s/rbac/challenge-controller-rbac.yaml
+kubectl apply -f k8s/controller/api-deployment.yaml   # 8 replicas, 250m CPU request
 kubectl apply -f k8s/controller/daemon-deployment.yaml
 
-# 7. Apply CiliumNetworkPolicy for controller → kube-apiserver access
+# 8. Apply CiliumNetworkPolicy for controller → kube-apiserver access
 # (required on DOKS — standard NetworkPolicy cannot target kube-apiserver)
 
-# 8. Pre-create tcp-services ConfigMap, bulk spawn, import flags
+# 9. Pre-create challenge manifests ConfigMap, bulk spawn, import flags
 kubectl create configmap challenge-manifests --from-file=challenges/manifests/ -n ctfd --dry-run=client -o yaml | kubectl apply -f -
 kubectl rollout restart deployment/controller-api -n ctfd
 # Run bulk_spawn and import_flags via controller pod
 ```
+
+**Notes on Redis after restore:**
+- Redis data is persisted via AOF to a 1Gi PVC (`redis-data-redis-0`). If the PVC survived the restore (cluster recreated but PVC kept), sessions are preserved.
+- If the PVC is fresh/empty, all sessions are cleared — teams must re-login. This is expected.
+- If you see login loops after changing `SESSION_COOKIE_DOMAIN`, run `kubectl exec -n ctfd redis-0 -- redis-cli FLUSHDB` to clear conflicting old-domain cookies.
 
 ### Admin password reset
 

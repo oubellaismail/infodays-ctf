@@ -1,0 +1,114 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: proxysql-config
+  namespace: ctfd
+data:
+  proxysql.cnf: |
+    datadir="/var/lib/proxysql"
+
+    admin_variables=
+    {
+        admin_credentials="admin:admin"
+        mysql_ifaces="0.0.0.0:6032"
+    }
+
+    mysql_variables=
+    {
+        threads=4
+        max_connections=2048
+        default_query_delay=0
+        default_query_timeout=36000000
+        have_compress=true
+        poll_timeout=2000
+        interfaces="0.0.0.0:6033"
+        default_schema="information_schema"
+        stacksize=1048576
+        server_version="8.0.35"
+        connect_timeout_server=3000
+        connect_timeout_server_max=10000
+        monitor_username="ctfd"
+        monitor_password="PLACEHOLDER_WILL_BE_OVERRIDDEN"
+        monitor_history=600000
+        monitor_connect_interval=60000
+        monitor_ping_interval=10000
+        monitor_read_only_interval=1500
+        monitor_read_only_timeout=500
+        ping_interval_server_msec=120000
+        ping_timeout_server=500
+        commands_stats=true
+        sessions_sort=true
+        connect_retries_on_failure=10
+        connection_max_age_ms=0
+        multiplexing=true
+    }
+
+    # Hostgroup 0 = writer (primary), Hostgroup 1 = reader (replica)
+    mysql_servers =
+    (
+        {
+            address="mysql.ctfd.svc.cluster.local"
+            port=3306
+            hostgroup=0
+            max_connections=200
+            weight=1000
+        },
+        {
+            address="mysql-replica.ctfd.svc.cluster.local"
+            port=3306
+            hostgroup=1
+            max_connections=200
+            weight=1000
+        }
+    )
+
+    mysql_users =
+    (
+        {
+            username="ctfd"
+            password="PLACEHOLDER_WILL_BE_OVERRIDDEN"
+            default_hostgroup=0
+            max_connections=1000
+            active=1
+        }
+    )
+
+    # Read/write splitting rules:
+    # Rule 1: SELECT ... FOR UPDATE → writer (hostgroup 0) — these are write-intent reads
+    # Rule 2: All other SELECT → reader (hostgroup 1)
+    # Rule 3: Everything else (INSERT, UPDATE, DELETE) → writer (hostgroup 0)
+    mysql_query_rules =
+    (
+        {
+            rule_id=1
+            active=1
+            match_pattern="^SELECT.*FOR UPDATE"
+            destination_hostgroup=0
+            apply=1
+        },
+        {
+            rule_id=2
+            active=1
+            match_pattern="^SELECT"
+            destination_hostgroup=1
+            apply=1
+        },
+        {
+            rule_id=3
+            active=1
+            match_pattern=".*"
+            destination_hostgroup=0
+            apply=1
+        }
+    )
+
+    # Replication hostgroups: ProxySQL monitors read_only flag and auto-shuns
+    # a replica that falls behind or gets promoted to writer.
+    mysql_replication_hostgroups =
+    (
+        {
+            writer_hostgroup=0
+            reader_hostgroup=1
+            comment="primary-replica split"
+        }
+    )

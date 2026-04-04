@@ -1,9 +1,10 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: redis
   namespace: ctfd
 spec:
+  serviceName: redis
   replicas: 1
   selector:
     matchLabels:
@@ -16,6 +17,10 @@ spec:
       containers:
       - name: redis
         image: redis:7-alpine
+        args:
+        - redis-server
+        - --appendonly yes
+        - --appendfsync everysec
         ports:
         - containerPort: 6379
           protocol: TCP
@@ -23,3 +28,30 @@ spec:
           limits:
             cpu: 100m
             memory: 256Mi
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: do-block-storage
+      resources:
+        requests:
+          storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: ctfd
+spec:
+  type: ClusterIP
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+    protocol: TCP

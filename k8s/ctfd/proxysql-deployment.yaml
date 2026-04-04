@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxysql
+  namespace: ctfd
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: proxysql
+  template:
+    metadata:
+      labels:
+        app: proxysql
+    spec:
+      initContainers:
+      - name: proxysql-init
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          cp /etc/proxysql-template/proxysql.cnf /var/lib/proxysql/proxysql.cnf
+          sed -i "s/PLACEHOLDER_WILL_BE_OVERRIDDEN/$MYSQL_PASSWORD/g" /var/lib/proxysql/proxysql.cnf
+        env:
+        - name: MYSQL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: ctfd-secrets
+              key: MYSQL_PASSWORD
+        volumeMounts:
+        - name: proxysql-config
+          mountPath: /etc/proxysql-template
+          readOnly: true
+        - name: proxysql-data
+          mountPath: /var/lib/proxysql
+      containers:
+      - name: proxysql
+        image: proxysql/proxysql:2.6.3
+        command:
+        - proxysql
+        - -f
+        - -c
+        - /var/lib/proxysql/proxysql.cnf
+        ports:
+        - containerPort: 6033
+          name: mysql
+          protocol: TCP
+        - containerPort: 6032
+          name: admin
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 512Mi
+          requests:
+            cpu: 250m
+            memory: 256Mi
+        readinessProbe:
+          exec:
+            command:
+            - mysql
+            - -h
+            - "127.0.0.1"
+            - -P
+            - "6032"
+            - -u
+            - admin
+            - -padmin
+            - -e
+            - "SELECT 1"
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+        livenessProbe:
+          exec:
+            command:
+            - mysql
+            - -h
+            - "127.0.0.1"
+            - -P
+            - "6032"
+            - -u
+            - admin
+            - -padmin
+            - -e
+            - "SELECT 1"
+          initialDelaySeconds: 15
+          periodSeconds: 30
+          timeoutSeconds: 5
+        volumeMounts:
+        - name: proxysql-data
+          mountPath: /var/lib/proxysql
+      volumes:
+      - name: proxysql-config
+        configMap:
+          name: proxysql-config
+      - name: proxysql-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: proxysql
+  namespace: ctfd
+spec:
+  type: ClusterIP
+  selector:
+    app: proxysql
+  ports:
+  - port: 6033
+    targetPort: 6033
+    name: mysql
+    protocol: TCP
+  - port: 6032
+    targetPort: 6032
+    name: admin
+    protocol: TCP

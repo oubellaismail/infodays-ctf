@@ -12,6 +12,8 @@ Endpoints:
 import os
 import secrets
 import logging
+import time
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -30,6 +32,30 @@ logger = logging.getLogger(__name__)
 
 # Cache manifests in memory for URL building
 _manifest_cache: Optional[dict] = None
+
+# Status cache: team_id → (result_dict, expiry_timestamp)
+# TTL of 5s reduces K8s API calls under poll-heavy load.
+_status_cache: dict = {}
+_status_cache_lock = threading.Lock()
+_STATUS_CACHE_TTL = 5.0  # seconds
+
+
+def _get_status_cache(team_id: str):
+    with _status_cache_lock:
+        entry = _status_cache.get(team_id)
+        if entry and time.monotonic() < entry[1]:
+            return entry[0]
+    return None
+
+
+def _set_status_cache(team_id: str, result: dict):
+    with _status_cache_lock:
+        _status_cache[team_id] = (result, time.monotonic() + _STATUS_CACHE_TTL)
+
+
+def _invalidate_status_cache(team_id: str):
+    with _status_cache_lock:
+        _status_cache.pop(team_id, None)
 
 
 def get_challenge_manifests() -> dict:
@@ -171,12 +197,13 @@ def build_challenge_url(core_v1: Any, team_id: str, challenge_id: str) -> Option
 
 
 @app.post("/activate", response_model=ActivateResponse)
-async def activate(req: ActivateRequest, request: Request, _=Depends(verify_controller_key)):
+def activate(req: ActivateRequest, request: Request, _=Depends(verify_controller_key)):
     """Activate a challenge for a team."""
     apps_v1 = request.app.state.apps_v1
     core_v1 = request.app.state.core_v1
 
-    # Count active pods for this team
+    # Count active pods for this team — always fetch fresh from K8s (never use cache here,
+    # a stale read could allow a team to exceed the 4-instance cap under concurrent requests).
     deploys = apps_v1.list_namespaced_deployment(
         "challenges", label_selector=f"team={req.team_id},managed-by=ctf-controller"
     ).items
@@ -203,12 +230,13 @@ async def activate(req: ActivateRequest, request: Request, _=Depends(verify_cont
     apps_v1.patch_namespaced_deployment(dep_name, "challenges", patch_body)
 
     url = build_challenge_url(core_v1, req.team_id, req.challenge_id)
+    _invalidate_status_cache(req.team_id)
     logger.info(f"Activated {dep_name}")
     return {"status": "starting", "url": url}
 
 
 @app.post("/deactivate", response_model=DeactivateResponse)
-async def deactivate(req: DeactivateRequest, request: Request, _=Depends(verify_controller_key)):
+def deactivate(req: DeactivateRequest, request: Request, _=Depends(verify_controller_key)):
     """Deactivate a challenge for a team."""
     apps_v1 = request.app.state.apps_v1
 
@@ -221,13 +249,18 @@ async def deactivate(req: DeactivateRequest, request: Request, _=Depends(verify_
         raise
 
     clear_activation_annotation(apps_v1, dep_name)
+    _invalidate_status_cache(req.team_id)
     logger.info(f"Deactivated {dep_name}")
     return {"status": "suspended"}
 
 
 @app.get("/status/{team_id}", response_model=StatusResponse)
-async def get_status(team_id: str, request: Request, _=Depends(verify_controller_key)):
+def get_status(team_id: str, request: Request, _=Depends(verify_controller_key)):
     """Get status of all challenges for a team. Returns empty list for unknown teams."""
+    cached = _get_status_cache(team_id)
+    if cached is not None:
+        return cached
+
     apps_v1 = request.app.state.apps_v1
     core_v1 = request.app.state.core_v1
 
@@ -265,7 +298,9 @@ async def get_status(team_id: str, request: Request, _=Depends(verify_controller
             )
         )
 
-    return {"challenges": challenges}
+    result = {"challenges": challenges}
+    _set_status_cache(team_id, result)
+    return result
 
 
 @app.get("/health")

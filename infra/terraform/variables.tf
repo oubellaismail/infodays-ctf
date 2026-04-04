@@ -42,13 +42,19 @@ variable "cluster_version" {
 variable "node_size" {
   type        = string
   default     = "s-4vcpu-8gb"
-  description = "Node pool droplet size (must not exceed s-4vcpu-8gb per constitution)"
+  description = "Node pool droplet size (Phase 7: 5 × s-4vcpu-8gb general pool for 50-team support)"
 }
 
-variable "node_count" {
+variable "node_min" {
   type        = number
-  default     = 5
-  description = "Number of nodes in the pool (must not exceed 5 per constitution)"
+  default     = 3
+  description = "Minimum nodes in autoscaling pool (scales down during quiet periods)"
+}
+
+variable "node_max" {
+  type        = number
+  default     = 8
+  description = "Maximum nodes in autoscaling pool (scales up for event peak / surprise load)"
 }
 
 variable "registry_name" {
