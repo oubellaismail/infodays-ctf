@@ -1,0 +1,513 @@
+/* Infodays CTF — Brand Design System
+ * Maps Infodays color tokens to Bootstrap 5 CSS variables.
+ * Applied via data-bs-theme attribute set by CTFd on <html>.
+ * Reference: specs/design/colors.md, .impeccable.md
+ */
+
+/* ── Dark Mode (default) ──────────────────────────────────── */
+[data-bs-theme="dark"] {
+  --bs-body-bg:           #020511;
+  --bs-body-color:        #D6DFEC;
+  --bs-card-bg:           #0A1120;
+  --bs-primary:           #397BE9;
+  --bs-primary-rgb:       57, 123, 233;
+  --bs-secondary-bg:      #111B2E;
+  --bs-tertiary-bg:       #0E1624;
+  --bs-secondary-color:   #7E90AE;
+  --bs-border-color:      #1A2538;
+  --bs-danger:            #861118;
+  --bs-danger-rgb:        134, 17, 24;
+  --bs-success:           #1A7F4E;
+  --bs-success-rgb:       26, 127, 78;
+  --bs-font-sans-serif:   'Inter', system-ui, -apple-system, sans-serif;
+  --bs-dark:              #0A1120;
+  --bs-dark-rgb:          10, 17, 32;
+  --ctf-badge-running-bg: #166D43;
+  --ctf-badge-muted-bg:   #162235;
+  --ctf-badge-muted-color:#7E90AE;
+  --ctf-badge-error-bg:   #861118;
+  --ctf-ui-bg:            rgba(255, 255, 255, 0.04);
+  --ctf-ui-border:        #1A2538;
+}
+
+/* ── Light Mode ───────────────────────────────────────────── */
+[data-bs-theme="light"] {
+  --bs-body-bg:           #F2F5FC;
+  --bs-body-color:        #0A1628;
+  --bs-card-bg:           #FFFFFF;
+  --bs-primary:           #2563EB;
+  --bs-primary-rgb:       37, 99, 235;
+  --bs-secondary-bg:      #DDE6F5;
+  --bs-tertiary-bg:       #EBF0F8;
+  --bs-secondary-color:   #4A5E78;
+  --bs-border-color:      #C4CDD9;
+  --bs-danger:            #B91C1C;
+  --bs-danger-rgb:        185, 28, 28;
+  --bs-success:           #15803D;
+  --bs-success-rgb:       21, 128, 61;
+  --bs-font-sans-serif:   'Inter', system-ui, -apple-system, sans-serif;
+  --ctf-badge-running-bg: #15803D;
+  --ctf-badge-muted-bg:   #DDE6F5;
+  --ctf-badge-muted-color:#4A5E78;
+  --ctf-badge-error-bg:   #B91C1C;
+  --ctf-ui-bg:            rgba(0, 0, 0, 0.03);
+  --ctf-ui-border:        #C4CDD9;
+}
+
+/* ── Global Typography — !important to beat CTFd's own CSS ── */
+/* Exclude icon fonts: Bootstrap Icons, Font Awesome, Material Icons */
+body,
+body *:not(code):not(pre):not(kbd):not(samp):not(.ctf-nc-command):not(.ctf-instance-url):not(i):not([class*="bi-"]):not([class*="fa-"]):not([class*="fa "]):not([class*="fas "]):not([class*="far "]):not([class*="fab "]):not([class*="material-icons"]):not(.btn-close) {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+}
+
+body {
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--bs-body-color) !important;
+  background-color: var(--bs-body-bg) !important;
+  background-image:
+    /* Grid lines — faint blue structure */
+    linear-gradient(to right, rgba(57, 123, 233, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(57, 123, 233, 0.05) 1px, transparent 1px),
+    /* Radial glow spotlights — depth & color */
+    radial-gradient(ellipse 80% 60% at 50% -10%, rgba(57, 123, 233, 0.25), transparent),
+    radial-gradient(ellipse 60% 50% at 85% 50%, rgba(57, 123, 233, 0.12), transparent),
+    radial-gradient(ellipse 50% 50% at 10% 80%, rgba(232, 75, 42, 0.08), transparent) !important;
+  background-size: 48px 48px, 48px 48px, 100% 100%, 100% 100%, 100% 100% !important;
+  background-attachment: fixed !important;
+  min-height: 100vh;
+}
+
+/* Noise texture overlay — film-grain depth (dark mode only) */
+[data-bs-theme="dark"] body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 182px;
+  opacity: 0.06;
+  pointer-events: none;
+  z-index: 0;
+}
+
+code, pre, kbd, samp,
+.ctf-nc-command,
+.ctf-instance-url {
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Mono', monospace !important;
+}
+
+/* ── Bootstrap Component Overrides ───────────────────────── */
+/* Modal — elevated glow */
+.modal-content {
+  background-color: var(--bs-card-bg) !important;
+  border-color: var(--bs-border-color) !important;
+  box-shadow: 0 0 40px rgba(57, 123, 233, 0.1), 0 0 80px rgba(57, 123, 233, 0.05);
+}
+
+.modal-header,
+.modal-footer {
+  border-color: var(--bs-border-color) !important;
+}
+
+/* Cards — hover glow */
+.card {
+  background-color: var(--bs-card-bg) !important;
+  border-color: var(--bs-border-color) !important;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card:hover {
+  border-color: rgba(57, 123, 233, 0.3) !important;
+  box-shadow: 0 0 20px rgba(57, 123, 233, 0.08), 0 0 60px rgba(57, 123, 233, 0.04);
+}
+
+.card-header,
+.card-footer {
+  background-color: var(--bs-secondary-bg) !important;
+  border-color: var(--bs-border-color) !important;
+}
+
+/* Tables (scoreboard) */
+.table {
+  --bs-table-bg:          var(--bs-body-bg);
+  --bs-table-border-color: var(--bs-border-color);
+  --bs-table-striped-bg:  var(--bs-tertiary-bg);
+  --bs-table-hover-bg:    var(--bs-secondary-bg);
+  color: var(--bs-body-color) !important;
+}
+
+.table > :not(caption) > * > * {
+  background-color: var(--bs-body-bg) !important;
+  border-bottom-color: var(--bs-border-color) !important;
+  color: var(--bs-body-color) !important;
+}
+
+.table-striped > tbody > tr:nth-of-type(odd) > * {
+  background-color: var(--bs-tertiary-bg) !important;
+}
+
+.table > thead > tr > th {
+  background-color: var(--bs-secondary-bg) !important;
+  border-bottom-color: var(--bs-border-color) !important;
+}
+
+/* Navbar — glassmorphism blur */
+.navbar {
+  background-color: rgba(10, 17, 32, 0.8) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+[data-bs-theme="light"] .navbar {
+  background-color: rgba(242, 245, 252, 0.85) !important;
+}
+
+.navbar .nav-link,
+.navbar .navbar-brand {
+  color: var(--bs-body-color) !important;
+}
+
+.navbar .nav-link:hover {
+  color: var(--bs-primary) !important;
+}
+
+/* Dropdown menus */
+.dropdown-menu {
+  background-color: var(--bs-card-bg) !important;
+  border-color: var(--bs-border-color) !important;
+}
+
+.dropdown-item {
+  color: var(--bs-body-color) !important;
+}
+
+.dropdown-item:hover,
+.dropdown-item:focus {
+  background-color: var(--bs-secondary-bg) !important;
+  color: var(--bs-body-color) !important;
+}
+
+/* Input fields */
+.form-control,
+.form-select {
+  background-color: var(--bs-tertiary-bg) !important;
+  border-color: var(--bs-border-color) !important;
+  color: var(--bs-body-color) !important;
+}
+
+.form-control:focus,
+.form-select:focus {
+  background-color: var(--bs-tertiary-bg) !important;
+  border-color: var(--bs-primary) !important;
+  color: var(--bs-body-color) !important;
+  box-shadow: 0 0 0 0.2rem rgba(var(--bs-primary-rgb), 0.25);
+}
+
+/* Primary button */
+.btn-primary {
+  --bs-btn-bg:           var(--bs-primary);
+  --bs-btn-border-color: var(--bs-primary);
+  --bs-btn-hover-bg:     color-mix(in srgb, var(--bs-primary) 85%, black);
+  --bs-btn-active-bg:    color-mix(in srgb, var(--bs-primary) 70%, black);
+}
+
+/* ── CTFd Page Overrides ─────────────────────────────────── */
+
+/* Hero / Jumbotron — subtle with gradient accent */
+.jumbotron {
+  position: relative;
+  background-color: var(--bs-tertiary-bg) !important;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.jumbotron::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(57, 123, 233, 0.6), transparent);
+}
+
+.jumbotron h1,
+.jumbotron h2 {
+  color: var(--bs-body-color) !important;
+  text-shadow: 0 0 40px rgba(57, 123, 233, 0.25);
+}
+
+.jumbotron p {
+  color: var(--bs-body-color) !important;
+}
+
+/* ── Challenge Board Instance Indicators ──────────────────── */
+/* Running instance — primary blue accent + subtle glow */
+.challenge-button.ctf-instance-active {
+  border-left: 3px solid var(--bs-primary) !important;
+  box-shadow: inset 3px 0 12px -4px rgba(var(--bs-primary-rgb), 0.4),
+              0 0 12px rgba(var(--bs-primary-rgb), 0.1);
+  position: relative;
+}
+
+/* Small pulsing dot indicator in top-right corner */
+.challenge-button.ctf-instance-active::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bs-primary);
+  box-shadow: 0 0 6px rgba(var(--bs-primary-rgb), 0.6);
+  animation: ctf-dot-pulse 2s ease-in-out infinite;
+}
+
+@keyframes ctf-dot-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 4px rgba(var(--bs-primary-rgb), 0.4); }
+  50%      { opacity: 0.5; box-shadow: 0 0 10px rgba(var(--bs-primary-rgb), 0.8); }
+}
+
+/* Stopped instance — muted indicator */
+.challenge-button.ctf-instance-stopped {
+  border-left: 3px solid var(--ctf-badge-muted-bg) !important;
+}
+
+/* Category headings */
+.category-header h3 {
+  color: var(--bs-body-color) !important;
+}
+
+/* ── Page sections — kill any stray backgrounds ─────────── */
+.container,
+.container-fluid,
+main,
+section,
+.page-content {
+  background-color: transparent !important;
+}
+
+/* Alert / notification banners */
+.alert {
+  border-color: var(--bs-border-color) !important;
+}
+
+/* Pagination */
+.page-link {
+  background-color: var(--bs-card-bg) !important;
+  border-color: var(--bs-border-color) !important;
+  color: var(--bs-body-color) !important;
+}
+
+.page-link:hover {
+  background-color: var(--bs-secondary-bg) !important;
+  border-color: var(--bs-primary) !important;
+}
+
+.page-item.active .page-link {
+  background-color: var(--bs-primary) !important;
+  border-color: var(--bs-primary) !important;
+}
+
+/* Footer */
+footer,
+.footer {
+  background-color: var(--bs-card-bg) !important;
+  border-top: 1px solid var(--bs-border-color);
+  color: var(--bs-secondary-color) !important;
+}
+
+/* ── Instance Manager Panel ───────────────────────────────── */
+.ctf-logo {
+  height: 32px;
+  width: auto;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+/* Panel container */
+.ctf-controller-ui {
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--ctf-ui-border);
+  border-left: 3px solid var(--bs-primary);
+  border-radius: 6px;
+  background: var(--ctf-ui-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Top row: badge + button */
+.ctf-controller-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ctf-controller-ui .btn {
+  min-height: 36px;
+  min-width: 44px;
+  font-size: 13px;
+  padding: 6px 16px;
+  border-radius: 6px;
+}
+
+/* Connection row: label + URL/command */
+.ctf-controller-conn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bs-tertiary-bg);
+  border-radius: 4px;
+  border: 1px solid var(--ctf-ui-border);
+}
+
+.ctf-conn-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--bs-secondary-color);
+  flex-shrink: 0;
+}
+
+/* Status badges */
+.ctf-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--bs-white, #fff);
+  line-height: 1;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 6px rgba(22, 109, 67, 0.3); }
+  50%      { box-shadow: 0 0 14px rgba(22, 109, 67, 0.6); }
+}
+
+.ctf-badge--running {
+  background: var(--ctf-badge-running-bg);
+  animation: pulse-glow 2.5s ease-in-out infinite;
+}
+
+.ctf-badge--suspended,
+.ctf-badge--fresh {
+  background: var(--ctf-badge-muted-bg);
+  color: var(--ctf-badge-muted-color);
+}
+
+.ctf-badge--error {
+  background: var(--ctf-badge-error-bg);
+}
+
+/* Instance connection info */
+.ctf-nc-command {
+  padding: 2px 6px;
+  background: transparent;
+  border-radius: 3px;
+  font-size: 13px;
+  user-select: all;
+  cursor: text;
+  min-width: 0;
+  overflow-x: auto;
+  word-break: break-all;
+  color: var(--bs-body-color);
+}
+
+.ctf-instance-url {
+  font-size: 13px;
+  word-break: break-all;
+  min-width: 0;
+  color: var(--bs-primary) !important;
+  text-decoration: none;
+}
+
+.ctf-instance-url:hover {
+  text-decoration: underline;
+}
+
+.ctf-retry-link {
+  margin-left: 8px;
+}
+
+/* Inline warning banner (replaces browser alert) */
+.ctf-inline-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(var(--bs-danger-rgb), 0.3);
+  background: rgba(var(--bs-danger-rgb), 0.08);
+  color: var(--bs-body-color);
+  font-size: 13px;
+  line-height: 1.4;
+  animation: ctf-warn-in 0.25s ease-out;
+}
+
+.ctf-warning-icon {
+  flex-shrink: 0;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.ctf-warning-dismiss {
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--bs-secondary-color);
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.ctf-warning-dismiss:hover {
+  opacity: 1;
+}
+
+@keyframes ctf-warn-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Responsive ──────────────────────────────────────────── */
+@media (max-width: 576px) {
+  .ctf-controller-row {
+    flex-wrap: wrap;
+  }
+
+  .ctf-controller-ui .btn {
+    flex: 1 1 100%;
+  }
+
+  .ctf-controller-conn {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .ctf-retry-link {
+    margin-left: 0;
+  }
+
+  .jumbotron {
+    padding: 1rem 0;
+  }
+
+  .jumbotron h1 {
+    font-size: 1.5rem;
+  }
+}

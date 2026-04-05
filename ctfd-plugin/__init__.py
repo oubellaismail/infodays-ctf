@@ -126,6 +126,40 @@ def load(app):
     # *.challenges.infodays.net forwards a valid CTFd session cookie.
     app.config["SESSION_COOKIE_DOMAIN"] = ".infodays.net"
 
+    # ── Branding: inject stylesheet + Google Fonts ─────────────────────────
+    GOOGLE_FONTS_PRECONNECT = '<link rel="preconnect" href="https://fonts.googleapis.com">'
+    GOOGLE_FONTS_PRECONNECT2 = '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+    GOOGLE_FONTS_URL = (
+        '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
+        'family=Inter:wght@400;500;600;700'
+        '&family=JetBrains+Mono:wght@400;500'
+        '&display=swap" media="print" onload="this.media=\'all\'">'
+    )
+    BRAND_CSS_LINK = (
+        '<link rel="stylesheet" href="/plugins/controller-plugin/assets/style.css">'
+    )
+    GOOGLE_FONTS_NOSCRIPT = (
+        '<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
+        'family=Inter:wght@400;500;600;700'
+        '&family=JetBrains+Mono:wght@400;500'
+        '&display=swap"></noscript>'
+    )
+    INJECT_TAGS = "\n".join([
+        GOOGLE_FONTS_PRECONNECT,
+        GOOGLE_FONTS_PRECONNECT2,
+        GOOGLE_FONTS_URL,
+        GOOGLE_FONTS_NOSCRIPT,
+        BRAND_CSS_LINK,
+    ])
+
+    @app.after_request
+    def inject_brand_assets(response):
+        if response.content_type and response.content_type.startswith("text/html"):
+            data = response.get_data(as_text=True)
+            if "</head>" in data:
+                response.set_data(data.replace("</head>", INJECT_TAGS + "\n</head>", 1))
+        return response
+
     blueprint = Blueprint(
         "controller_plugin",
         __name__,

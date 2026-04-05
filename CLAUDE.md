@@ -1,6 +1,6 @@
 # infodays-ctf Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-02
+Auto-generated from all feature plans. Last updated: 2026-04-04
 
 ## Active Technologies
 - HCL (Terraform ≥1.5) for any Terraform additions; YAML (Kubernetes manifests); Bash (setup script); Python 3.11+ (import script) + `digitalocean` Terraform provider v2.x (already present); Kubernetes manifest files applied via `kubectl`; CTFd image `ctfd/ctfd:latest`; MySQL 8 image `mysql:8`; Redis 7 image `redis:7-alpine` (002-ctfd-platform-stack)
@@ -12,6 +12,8 @@ Auto-generated from all feature plans. Last updated: 2026-04-02
 - `backups/` (local host, SQL dumps), `tests/load/results/` (local host, JSON run summaries) (006-event-readiness-runbook)
 - HCL (Terraform ≥1.5), YAML (Kubernetes manifests), Bash 5 (scripts), JavaScript ESM (k6 load tests) + Terraform `digitalocean` provider v2.x, `helm` provider v2.x, ProxySQL 2.x, kubectl, k6 (007-100-team-scaling)
 - MySQL 8 (StatefulSet, 10Gi PVC on `do-block-storage`), Redis 7 (StatefulSet, 1Gi PVC on `do-block-storage`, AOF persistence) (007-100-team-scaling)
+- CSS3, Vanilla JavaScript (ES5/ES6), Python 3.11+ (Flask/CTFd plugin) + Bootstrap 5 (bundled with CTFd), Google Fonts CDN (Inter + JetBrains Mono), CTFd Blueprint static serving (008-ctfd-branding-ui-polish)
+- N/A — no persistent data involved (008-ctfd-branding-ui-polish)
 
 - Python 3.11+; `kubernetes` official Python client; `fastapi`; `uvicorn`; `httpx`; `pydantic` v2; `pytest` (003-challenge-controller-pod-lifecycle)
 - Controller API: FastAPI (not Flask/Django) — single uvicorn worker, stateless, K8s annotations as lifecycle state (003-challenge-controller-pod-lifecycle)
@@ -172,9 +174,9 @@ terraform -chdir=infra/terraform destroy
 HCL (Terraform ≥1.5); YAML (Kubernetes manifests via TF providers): Follow standard conventions
 
 ## Recent Changes
+- 008-ctfd-branding-ui-polish: Added CSS3, Vanilla JavaScript (ES5/ES6), Python 3.11+ (Flask/CTFd plugin) + Bootstrap 5 (bundled with CTFd), Google Fonts CDN (Inter + JetBrains Mono), CTFd Blueprint static serving
 - 007-100-team-scaling: Added HCL (Terraform ≥1.5), YAML (Kubernetes manifests), Bash 5 (scripts), JavaScript ESM (k6 load tests) + Terraform `digitalocean` provider v2.x, `helm` provider v2.x, ProxySQL 2.x, kubectl, k6
 - 006-load-testing: 200-VU soak tests (50 teams × 4 members, 45 min). CTFd scaled 2→5 replicas, workers 8→4, memory 512Mi→2Gi. MySQL memory 1Gi→2Gi (OOM fix), max-connections=500, innodb-buffer-pool-size=512MB. import_flags.py Content-Type fix. Challenge manifest names aligned to CTFd. tcp-services sequential port generation fix. Phase 7 planned for 100-team (400 VU) scaling with ProxySQL.
-- 006-event-readiness-runbook: Added Bash 5 (backup script), k6 JavaScript ESM (load test) + k6 (load test runtime), kubectl + kubeconfig (backup + checklist), mysqldump (inside MySQL pod)
 
 ## Key Integration Details
 

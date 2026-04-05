@@ -9,6 +9,52 @@
  */
 
 (function () {
+
+  // ─── Logo injection (runs for ALL visitors, including unauthenticated) ─────
+
+  var LOGO_DARK_URL  = "/plugins/controller-plugin/assets/logo-dark.png";
+  var LOGO_LIGHT_URL = "/plugins/controller-plugin/assets/logo-light.png";
+
+  function getLogoSrc() {
+    var theme = document.documentElement.getAttribute("data-bs-theme");
+    return theme === "light" ? LOGO_LIGHT_URL : LOGO_DARK_URL;
+  }
+
+  function injectLogo() {
+    var brand = document.querySelector(".navbar-brand");
+    if (!brand) return;
+    if (document.getElementById("ctf-brand-logo")) return;
+    var img = document.createElement("img");
+    img.id  = "ctf-brand-logo";
+    img.className = "ctf-logo";
+    img.src = getLogoSrc();
+    img.alt = "Infodays CTF";
+    img.width = 32;
+    img.height = 32;
+    brand.prepend(img);
+  }
+
+  function watchThemeForLogo() {
+    var logo = document.getElementById("ctf-brand-logo");
+    if (!logo) return;
+    new MutationObserver(function() {
+      logo.src = getLogoSrc();
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-bs-theme"] });
+  }
+
+  function initLogo() {
+    injectLogo();
+    watchThemeForLogo();
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initLogo);
+  } else {
+    initLogo();
+  }
+
+  // ─── Controller UI (requires authenticated team) ──────────────────────────
+
   var cfg = window.CTF_CONTROLLER;
   if (!cfg) return;
 
@@ -24,6 +70,10 @@
   }
 
   var SERVICE_CATEGORIES = ["web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"];
+
+  // Global instance state — tracks all running instances for board indicators
+  var allInstanceStatuses = {}; // { challenge_id: { status, url } }
+  var boardPollTimer = null;
 
   // Per-challenge state (reset when modal opens)
   var currentChallengeId = null;
@@ -85,7 +135,9 @@
 
     var container = document.createElement("div");
     container.id = "ctf-controller-ui";
-    container.style.cssText = "margin-bottom:12px;padding:10px;border:1px solid #444;border-radius:6px;background:rgba(255,255,255,0.05);";
+    container.className = "ctf-controller-ui";
+    container.setAttribute("role", "status");
+    container.setAttribute("aria-live", "polite");
 
     // Insert before challenge description in the modal
     var descEl =
@@ -114,45 +166,61 @@
     container.innerHTML = "";
 
     var badge = document.createElement("span");
-    badge.style.cssText = "margin-right:8px;padding:2px 8px;border-radius:4px;font-size:0.8em;color:#fff;";
+    badge.className = "ctf-badge";
 
     var btn = document.createElement("button");
-    btn.style.marginRight = "6px";
     btn.className = "btn btn-sm";
+
+    // Top row: badge + action button
+    var topRow = document.createElement("div");
+    topRow.className = "ctf-controller-row";
 
     if (status === "fresh" || status === "suspended") {
       badge.textContent = status === "fresh" ? "Not Started" : "Stopped";
-      badge.style.background = "#6c757d";
+      badge.classList.add(status === "fresh" ? "ctf-badge--fresh" : "ctf-badge--suspended");
       btn.textContent = "\u25B6 Start Instance";
-      btn.className += " btn-primary";
+      btn.classList.add("btn-primary");
       btn.onclick = handleStart;
-      container.appendChild(badge);
-      container.appendChild(btn);
+      topRow.appendChild(badge);
+      topRow.appendChild(btn);
+      container.appendChild(topRow);
     } else if (status === "running") {
       badge.textContent = "Running";
-      badge.style.background = "#28a745";
+      badge.classList.add("ctf-badge--running");
       btn.textContent = "\u23F9 Stop Instance";
-      btn.className += " btn-danger";
+      btn.classList.add("btn-outline-danger");
       btn.onclick = handleStop;
-      container.appendChild(badge);
-      container.appendChild(btn);
+      topRow.appendChild(badge);
+      topRow.appendChild(btn);
+      container.appendChild(topRow);
 
       if (challenge && challenge.url) {
+        // Connection row: label + copyable value
+        var connRow = document.createElement("div");
+        connRow.className = "ctf-controller-conn";
+
+        var label = document.createElement("span");
+        label.className = "ctf-conn-label";
+
         if (challenge.url.startsWith("nc ")) {
-          // TCP challenge: show copyable command, not a link
+          label.textContent = "Connect";
           var code = document.createElement("code");
           code.textContent = challenge.url;
-          code.style.cssText = "margin-left:8px;padding:2px 6px;background:rgba(0,0,0,0.3);border-radius:4px;font-size:0.9em;user-select:all;cursor:text;";
-          container.appendChild(code);
+          code.className = "ctf-nc-command";
+          connRow.appendChild(label);
+          connRow.appendChild(code);
         } else {
+          label.textContent = "Open";
           var urlLink = document.createElement("a");
           urlLink.href = challenge.url;
           urlLink.target = "_blank";
           urlLink.rel = "noopener noreferrer";
           urlLink.textContent = challenge.url;
-          urlLink.style.marginLeft = "8px";
-          container.appendChild(urlLink);
+          urlLink.className = "ctf-instance-url";
+          connRow.appendChild(label);
+          connRow.appendChild(urlLink);
         }
+        container.appendChild(connRow);
       }
     } else {
       renderUnknown(container);
@@ -167,25 +235,58 @@
 
     var badge = document.createElement("span");
     badge.textContent = "Error";
-    badge.style.cssText = "margin-right:8px;padding:2px 8px;border-radius:4px;font-size:0.8em;background:#dc3545;color:#fff;";
+    badge.className = "ctf-badge ctf-badge--error";
     container.appendChild(badge);
 
     var btn = document.createElement("button");
     btn.className = "btn btn-sm btn-secondary";
     btn.disabled = true;
     btn.textContent = "Unavailable";
-    btn.style.marginRight = "6px";
     container.appendChild(btn);
 
     var retryLink = document.createElement("a");
     retryLink.href = "#";
     retryLink.textContent = "Retry";
-    retryLink.style.marginLeft = "4px";
+    retryLink.className = "ctf-retry-link";
     retryLink.onclick = function (e) {
       e.preventDefault();
       updateUI();
     };
     container.appendChild(retryLink);
+  }
+
+  function showInlineWarning(message) {
+    var container = document.getElementById("ctf-controller-ui");
+    if (!container) return;
+
+    // Remove any existing warning
+    var old = container.querySelector(".ctf-inline-warning");
+    if (old) old.remove();
+
+    var warning = document.createElement("div");
+    warning.className = "ctf-inline-warning";
+    warning.setAttribute("role", "alert");
+
+    var icon = document.createElement("span");
+    icon.className = "ctf-warning-icon";
+    icon.textContent = "\u26A0";
+    icon.setAttribute("aria-hidden", "true");
+
+    var text = document.createElement("span");
+    text.textContent = message;
+
+    var dismiss = document.createElement("button");
+    dismiss.className = "ctf-warning-dismiss";
+    dismiss.setAttribute("aria-label", "Dismiss warning");
+    dismiss.textContent = "\u2715";
+    dismiss.onclick = function () { warning.remove(); };
+
+    warning.appendChild(icon);
+    warning.appendChild(text);
+    warning.appendChild(dismiss);
+
+    // Insert at the top of the container (before the row)
+    container.insertBefore(warning, container.firstChild);
   }
 
   function setButtonLoading(loading) {
@@ -209,7 +310,7 @@
       var data = await resp.json();
 
       if (resp.status === 429) {
-        alert(data.detail || "Max 4 active instances reached. Stop one to continue.");
+        showInlineWarning(data.detail || "Instance limit reached — you can run up to 4 at a time. Stop an active instance first.");
         setButtonLoading(false);
         return;
       }
@@ -225,6 +326,9 @@
         url: data.url,
       });
       setButtonLoading(false);
+      // Update board indicators immediately
+      allInstanceStatuses[currentChallengeId] = { status: "running", url: data.url };
+      updateBoardIndicators();
     } catch (err) {
       console.error("[ctf-controller] start failed:", err);
       renderUnknown();
@@ -252,6 +356,9 @@
         url: null,
       });
       setButtonLoading(false);
+      // Update board indicators immediately
+      allInstanceStatuses[currentChallengeId] = { status: "suspended", url: null };
+      updateBoardIndicators();
     } catch (err) {
       console.error("[ctf-controller] stop failed:", err);
       renderUnknown();
@@ -364,11 +471,93 @@
     // which will fire shown.bs.modal — no extra handling needed.
   }
 
+  // ─── Board-level instance indicators ────────────────────────────────────────
+
+  function slugify(name) {
+    return name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+  }
+
+  function findChallengeButtons() {
+    // CTFd renders challenge cards as .challenge-button elements with the challenge name as text
+    return document.querySelectorAll(".challenge-button");
+  }
+
+  function updateBoardIndicators() {
+    var buttons = findChallengeButtons();
+    buttons.forEach(function (btn) {
+      var name = (btn.textContent || "").trim();
+      // Challenge buttons may contain points text — extract just the name
+      // CTFd format: "Challenge Name\n100" — take first line
+      var firstLine = name.split("\n")[0].trim();
+      var slug = slugify(firstLine);
+
+      // Remove all instance status classes
+      btn.classList.remove("ctf-instance-active", "ctf-instance-stopped");
+
+      var instance = allInstanceStatuses[slug];
+      if (instance && instance.status === "running") {
+        btn.classList.add("ctf-instance-active");
+      } else if (instance && instance.status === "suspended") {
+        btn.classList.add("ctf-instance-stopped");
+      }
+    });
+  }
+
+  async function fetchAllStatuses() {
+    try {
+      var resp = await ctfdFetch("/controller-proxy/status/" + TEAM_ID);
+      if (!resp.ok) return;
+      var data = await resp.json();
+      allInstanceStatuses = {};
+      (data.challenges || []).forEach(function (ch) {
+        allInstanceStatuses[ch.challenge_id] = ch;
+      });
+      updateBoardIndicators();
+    } catch (err) {
+      console.error("[ctf-controller] board status fetch failed:", err);
+    }
+  }
+
+  function startBoardPolling() {
+    // CTFd renders challenge buttons dynamically via Alpine.js / AJAX —
+    // they don't exist at DOMContentLoaded. Use MutationObserver to detect
+    // when .challenge-button elements appear, then start polling.
+    var alreadyStarted = false;
+
+    function beginPolling() {
+      if (alreadyStarted) return;
+      alreadyStarted = true;
+      console.log("[ctf-controller] challenge buttons detected, starting board polling");
+      fetchAllStatuses();
+      if (boardPollTimer) clearInterval(boardPollTimer);
+      boardPollTimer = setInterval(fetchAllStatuses, 20000);
+    }
+
+    // Check immediately in case buttons are already rendered
+    if (document.querySelector(".challenge-button")) {
+      beginPolling();
+      return;
+    }
+
+    // Watch for buttons to appear
+    var observer = new MutationObserver(function () {
+      if (document.querySelector(".challenge-button")) {
+        observer.disconnect();
+        beginPolling();
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // Safety timeout — stop watching after 30s if never found (not on challenges page)
+    setTimeout(function () { observer.disconnect(); }, 30000);
+  }
+
   // ─── Bootstrap ──────────────────────────────────────────────────────────────
 
   function init() {
     console.log("[ctf-controller] Plugin loaded, team_id=" + TEAM_ID + ", admin=" + IS_ADMIN);
     watchChallengeModal();
+    startBoardPolling();
   }
 
   if (document.readyState === "loading") {

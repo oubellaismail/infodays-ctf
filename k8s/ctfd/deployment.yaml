@@ -109,6 +109,18 @@ spec:
           mountPath: /opt/CTFd/CTFd/plugins/controller-plugin/assets/plugin.js
           subPath: plugin.js
           readOnly: true
+        - name: plugin-css
+          mountPath: /opt/CTFd/CTFd/plugins/controller-plugin/assets/style.css
+          subPath: style.css
+          readOnly: true
+        - name: plugin-logo-dark
+          mountPath: /opt/CTFd/CTFd/plugins/controller-plugin/assets/logo-dark.png
+          subPath: logo-dark.png
+          readOnly: true
+        - name: plugin-logo-light
+          mountPath: /opt/CTFd/CTFd/plugins/controller-plugin/assets/logo-light.png
+          subPath: logo-light.png
+          readOnly: true
       volumes:
       - name: plugin-init
         configMap:
@@ -116,3 +128,12 @@ spec:
       - name: plugin-js
         configMap:
           name: ctfd-plugin-js
+      - name: plugin-css
+        configMap:
+          name: ctfd-plugin-css
+      - name: plugin-logo-dark
+        configMap:
+          name: ctfd-plugin-logo-dark
+      - name: plugin-logo-light
+        configMap:
+          name: ctfd-plugin-logo-light
