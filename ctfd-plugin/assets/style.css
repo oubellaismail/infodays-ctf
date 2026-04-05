@@ -67,14 +67,13 @@ body {
   color: var(--bs-body-color) !important;
   background-color: var(--bs-body-bg) !important;
   background-image:
-    /* Grid lines — faint blue structure */
-    linear-gradient(to right, rgba(57, 123, 233, 0.05) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(57, 123, 233, 0.05) 1px, transparent 1px),
+    /* Logo-inspired pattern tile: triangles (arrow accents), L-brackets, squares */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3C!-- Arrow triangle (logo accent) --%3E%3Cpolygon points='8,4 14,8 8,12' fill='rgba(232,75,42,0.06)'/%3E%3C!-- L-bracket top-left (letter geometry) --%3E%3Cpath d='M2 20 L2 28 L6 28' fill='none' stroke='rgba(57,123,233,0.05)' stroke-width='0.8'/%3E%3C!-- Small square (pixel block) --%3E%3Crect x='55' y='5' width='3' height='3' fill='rgba(57,123,233,0.04)'/%3E%3C!-- Arrow triangle flipped --%3E%3Cpolygon points='112,52 106,56 112,60' fill='rgba(232,75,42,0.05)'/%3E%3C!-- L-bracket bottom-right --%3E%3Cpath d='M98 90 L98 98 L102 98' fill='none' stroke='rgba(57,123,233,0.05)' stroke-width='0.8'/%3E%3C!-- Square dot --%3E%3Crect x='45' y='68' width='2' height='2' fill='rgba(57,123,233,0.05)'/%3E%3C!-- L-bracket inverted --%3E%3Cpath d='M70 35 L78 35 L78 39' fill='none' stroke='rgba(57,123,233,0.04)' stroke-width='0.8'/%3E%3C!-- Small arrow --%3E%3Cpolygon points='30,95 36,99 30,103' fill='rgba(232,75,42,0.04)'/%3E%3C!-- Corner bracket --%3E%3Cpath d='M88 12 L96 12 L96 16' fill='none' stroke='rgba(57,123,233,0.05)' stroke-width='0.8'/%3E%3C!-- Dot --%3E%3Crect x='18' y='55' width='2' height='2' fill='rgba(57,123,233,0.04)'/%3E%3C/svg%3E"),
     /* Radial glow spotlights — depth & color */
     radial-gradient(ellipse 80% 60% at 50% -10%, rgba(57, 123, 233, 0.25), transparent),
     radial-gradient(ellipse 60% 50% at 85% 50%, rgba(57, 123, 233, 0.12), transparent),
     radial-gradient(ellipse 50% 50% at 10% 80%, rgba(232, 75, 42, 0.08), transparent) !important;
-  background-size: 48px 48px, 48px 48px, 100% 100%, 100% 100%, 100% 100% !important;
+  background-size: 120px 120px, 100% 100%, 100% 100%, 100% 100% !important;
   background-attachment: fixed !important;
   min-height: 100vh;
 }
@@ -216,13 +215,47 @@ code, pre, kbd, samp,
 
 /* ── CTFd Page Overrides ─────────────────────────────────── */
 
-/* Hero / Jumbotron — subtle with gradient accent */
+/* Hero / Jumbotron — hexagon pattern + animated sweep */
 .jumbotron {
   position: relative;
+  overflow: hidden;
   background-color: var(--bs-tertiary-bg) !important;
-  border-bottom: 1px solid var(--bs-border-color);
+  background-image:
+    /* Scan lines — faint horizontal stripes */
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(57, 123, 233, 0.03) 2px,
+      rgba(57, 123, 233, 0.03) 4px
+    ),
+    /* Logo-inspired tile: arrows + brackets (denser for hero) */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Cpolygon points='6,3 12,7 6,11' fill='rgba(232,75,42,0.1)'/%3E%3Cpath d='M2 22 L2 30 L6 30' fill='none' stroke='rgba(57,123,233,0.1)' stroke-width='0.8'/%3E%3Crect x='38' y='4' width='3' height='3' fill='rgba(57,123,233,0.08)'/%3E%3Cpolygon points='74,38 68,42 74,46' fill='rgba(232,75,42,0.08)'/%3E%3Cpath d='M60 60 L60 68 L64 68' fill='none' stroke='rgba(57,123,233,0.1)' stroke-width='0.8'/%3E%3Crect x='28' y='50' width='2' height='2' fill='rgba(57,123,233,0.08)'/%3E%3Cpath d='M44 28 L52 28 L52 32' fill='none' stroke='rgba(57,123,233,0.08)' stroke-width='0.8'/%3E%3Cpolygon points='18,65 24,69 18,73' fill='rgba(232,75,42,0.06)'/%3E%3C/svg%3E"),
+    /* Depth gradient — blue glow from center */
+    radial-gradient(ellipse 70% 120% at 50% 50%, rgba(57, 123, 233, 0.1), transparent) !important;
+  border-bottom: none !important;
 }
 
+/* Animated gradient sweep — light scanning across the banner */
+.jumbotron::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 30%,
+    rgba(57, 123, 233, 0.06) 45%,
+    rgba(57, 123, 233, 0.1) 50%,
+    rgba(57, 123, 233, 0.06) 55%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: hero-sweep 6s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Bottom accent line */
 .jumbotron::after {
   content: "";
   position: absolute;
@@ -231,15 +264,25 @@ code, pre, kbd, samp,
   right: 0;
   height: 2px;
   background: linear-gradient(90deg, transparent, rgba(57, 123, 233, 0.6), transparent);
+  z-index: 1;
+}
+
+@keyframes hero-sweep {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 .jumbotron h1,
 .jumbotron h2 {
+  position: relative;
+  z-index: 1;
   color: var(--bs-body-color) !important;
-  text-shadow: 0 0 40px rgba(57, 123, 233, 0.25);
+  text-shadow: 0 0 40px rgba(57, 123, 233, 0.3);
 }
 
 .jumbotron p {
+  position: relative;
+  z-index: 1;
   color: var(--bs-body-color) !important;
 }
 
