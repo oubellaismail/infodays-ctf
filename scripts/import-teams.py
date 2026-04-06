@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-import-teams.py — Bulk create CTFd teams from a CSV file.
+import-teams.py — Bulk create CTFd teams and players from a CSV file.
 
 Idempotent: existing teams and users are skipped, not duplicated.
 
-Each CSV row creates:
-  1. A user account  (the team captain)
-  2. A team          (same name as the user)
-  3. The user is added to the team as captain
+Each CSV row represents one player. Rows are grouped by team_name:
+  - The team is created once (on first row for that team)
+  - Each player gets their own user account
+  - The first player listed for each team becomes captain
 
-CSV columns required: team_name, email, password
+CSV columns required: team_name, player_name, email, password
 
 Credentials are read from environment variables (auto-set by setup-ctfd.sh)
 or passed as CLI arguments. Environment takes priority over CLI args.
@@ -30,6 +30,7 @@ import argparse
 import csv
 import os
 import sys
+from collections import OrderedDict
 
 import requests
 
@@ -42,6 +43,8 @@ def validate_row(row, idx):
     errors = []
     if not row.get("team_name", "").strip():
         errors.append("team_name is empty")
+    if not row.get("player_name", "").strip():
+        errors.append("player_name is empty")
     email = row.get("email", "").strip()
     if not email:
         errors.append("email is empty")
@@ -61,16 +64,25 @@ def api(session, method, url, **kwargs):
     return resp
 
 
+def group_by_team(rows):
+    """Group CSV rows by team_name, preserving order."""
+    teams = OrderedDict()
+    for row in rows:
+        team_name = row["team_name"].strip()
+        teams.setdefault(team_name, []).append(row)
+    return teams
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Bulk import CTFd teams from CSV",
+        description="Bulk import CTFd teams and players from CSV",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("csv_file", help="CSV file (columns: team_name, email, password)")
+    parser.add_argument("csv_file", help="CSV file (columns: team_name, player_name, email, password)")
     parser.add_argument("--ctfd-url",    default=os.environ.get("CTFD_URL", ""),
                         help="CTFd base URL (default: $CTFD_URL)")
     parser.add_argument("--admin-token", default=os.environ.get("CTFD_ADMIN_TOKEN", ""),
@@ -96,7 +108,7 @@ def main():
             if not reader.fieldnames:
                 print(f"ERROR: CSV is empty: {args.csv_file}", file=sys.stderr)
                 return 2
-            missing = {"team_name", "email", "password"} - set(reader.fieldnames)
+            missing = {"team_name", "player_name", "email", "password"} - set(reader.fieldnames)
             if missing:
                 print(f"ERROR: CSV missing columns: {missing}", file=sys.stderr)
                 return 2
@@ -109,20 +121,23 @@ def main():
         print("ERROR: CSV has no data rows.", file=sys.stderr)
         return 2
 
-    print(f"Processing {args.csv_file} ({len(rows)} rows)...\n")
+    teams = group_by_team(rows)
+    print(f"Processing {args.csv_file} ({len(rows)} players across {len(teams)} teams)...\n")
 
     # Dry run: just validate rows
     if args.dry_run:
         invalid = 0
         for idx, row in enumerate(rows, 1):
             errors = validate_row(row, idx)
-            name = row.get("team_name", "(unnamed)").strip()
+            player = row.get("player_name", "(unnamed)").strip()
+            team = row.get("team_name", "(unnamed)").strip()
             if errors:
-                print(f"[{idx}/{len(rows)}] {name} — INVALID: {', '.join(errors)}")
+                print(f"[{idx}/{len(rows)}] {team}/{player} — INVALID: {', '.join(errors)}")
                 invalid += 1
             else:
-                print(f"[{idx}/{len(rows)}] {name} — OK")
+                print(f"[{idx}/{len(rows)}] {team}/{player} — OK")
         print(f"\n[DRY RUN] {len(rows) - invalid} valid, {invalid} invalid.")
+        print(f"          {len(teams)} teams, {len(rows)} players.")
         return 0 if invalid == 0 else 1
 
     # -----------------------------------------------------------------------
@@ -154,13 +169,6 @@ def main():
     # Fetch existing teams and users ONCE (not per-row)
     # -----------------------------------------------------------------------
     try:
-        existing_teams = {
-            t["name"]
-            for page in range(1, 100)
-            for t in api(session, "GET", f"{base}/api/v1/teams?page={page}").json().get("data", [])
-        } if True else set()
-
-        # More efficient: fetch page by page until empty
         existing_teams = set()
         page = 1
         while True:
@@ -192,96 +200,118 @@ def main():
     print(f"Found {len(existing_teams)} existing teams, {len(existing_users)} existing users.\n")
 
     # -----------------------------------------------------------------------
-    # Import rows
+    # Import teams and players
     # -----------------------------------------------------------------------
-    created = skipped = failed = 0
+    teams_created = teams_skipped = players_created = players_skipped = players_failed = 0
 
-    for idx, row in enumerate(rows, 1):
-        name  = row["team_name"].strip()
-        email = row["email"].strip()
-        pwd   = row["password"].strip()
-        label = f"[{idx}/{len(rows)}] {name}"
+    for team_name, members in teams.items():
+        first_member = members[0]
+        team_label = f"[Team] {team_name}"
 
-        errors = validate_row(row, idx)
-        if errors:
-            print(f"{label} — INVALID: {', '.join(errors)}")
-            failed += 1
-            continue
+        # ----- Create or look up team -----
+        if team_name in existing_teams:
+            print(f"{team_label} — skipped (already exists)")
+            teams_skipped += 1
+            # Look up team ID for adding new members
+            try:
+                r = api(session, "GET", f"{base}/api/v1/teams?q={requests.utils.quote(team_name)}")
+                matches = [t for t in r.json().get("data", []) if t["name"] == team_name]
+                if not matches:
+                    print(f"{team_label} — FAILED (exists but ID not found)")
+                    players_failed += len(members)
+                    continue
+                team_id = matches[0]["id"]
+            except requests.RequestException as e:
+                print(f"{team_label} — FAILED (team lookup: {e})")
+                players_failed += len(members)
+                continue
+        else:
+            # Create team using first member's email as team email
+            try:
+                r = api(session, "POST", f"{base}/api/v1/teams", json={
+                    "name": team_name,
+                    "email": first_member["email"].strip(),
+                    "password": first_member["password"].strip(),
+                })
+                if r.status_code not in (200, 201):
+                    errs = r.json().get("errors", r.text)
+                    print(f"{team_label} — FAILED (team creation: {errs})")
+                    players_failed += len(members)
+                    continue
+                team_id = r.json()["data"]["id"]
+                existing_teams.add(team_name)
+                teams_created += 1
+                print(f"{team_label} — created (id={team_id})")
+            except requests.RequestException as e:
+                print(f"{team_label} — FAILED (team creation: {e})")
+                players_failed += len(members)
+                continue
 
-        if name in existing_teams:
-            print(f"{label} — skipped (team already exists)")
-            skipped += 1
-            continue
+        # ----- Create players and add to team -----
+        captain_set = False
+        for pidx, member in enumerate(members):
+            player_name = member["player_name"].strip()
+            email = member["email"].strip()
+            pwd = member["password"].strip()
+            player_label = f"  [{pidx+1}/{len(members)}] {player_name}"
 
-        # 1. Create user (captain account)
-        if name not in existing_users:
+            errors = validate_row(member, pidx)
+            if errors:
+                print(f"{player_label} — INVALID: {', '.join(errors)}")
+                players_failed += 1
+                continue
+
+            if player_name in existing_users:
+                print(f"{player_label} — skipped (user already exists)")
+                players_skipped += 1
+                continue
+
+            # Create user
             try:
                 r = api(session, "POST", f"{base}/api/v1/users", json={
-                    "name": name, "email": email,
+                    "name": player_name, "email": email,
                     "password": pwd, "type": "user",
                 })
                 if r.status_code not in (200, 201):
                     errs = r.json().get("errors", r.text)
-                    print(f"{label} — FAILED (user creation: {errs})")
-                    failed += 1
+                    print(f"{player_label} — FAILED (user creation: {errs})")
+                    players_failed += 1
                     continue
                 user_id = r.json()["data"]["id"]
-                existing_users.add(name)
+                existing_users.add(player_name)
             except requests.RequestException as e:
-                print(f"{label} — FAILED (user creation: {e})")
-                failed += 1
+                print(f"{player_label} — FAILED (user creation: {e})")
+                players_failed += 1
                 continue
-        else:
-            # User exists, look up their ID
+
+            # Add user to team
             try:
-                r = api(session, "GET", f"{base}/api/v1/users?name={requests.utils.quote(name)}")
-                matches = [u for u in r.json().get("data", []) if u["name"] == name]
-                if not matches:
-                    print(f"{label} — FAILED (user exists but ID not found)")
-                    failed += 1
-                    continue
-                user_id = matches[0]["id"]
+                api(session, "POST", f"{base}/api/v1/teams/{team_id}/members",
+                    json={"user_id": user_id})
             except requests.RequestException as e:
-                print(f"{label} — FAILED (user lookup: {e})")
-                failed += 1
+                print(f"{player_label} — FAILED (team membership: {e})")
+                players_failed += 1
                 continue
 
-        # 2. Create team
-        try:
-            r = api(session, "POST", f"{base}/api/v1/teams", json={
-                "name": name, "email": email, "password": pwd,
-            })
-            if r.status_code not in (200, 201):
-                errs = r.json().get("errors", r.text)
-                print(f"{label} — FAILED (team creation: {errs})")
-                failed += 1
-                continue
-            team_id = r.json()["data"]["id"]
-            existing_teams.add(name)
-        except requests.RequestException as e:
-            print(f"{label} — FAILED (team creation: {e})")
-            failed += 1
-            continue
+            # Set first player as captain
+            if not captain_set:
+                try:
+                    api(session, "PATCH", f"{base}/api/v1/teams/{team_id}",
+                        json={"captain_id": user_id})
+                    captain_set = True
+                except requests.RequestException:
+                    pass  # Non-fatal: captain is cosmetic
 
-        # 3. Add user to team + set as captain
-        try:
-            api(session, "POST", f"{base}/api/v1/teams/{team_id}/members",
-                json={"user_id": user_id})
-            api(session, "PATCH", f"{base}/api/v1/teams/{team_id}",
-                json={"captain_id": user_id})
-        except requests.RequestException as e:
-            print(f"{label} — FAILED (team membership: {e})")
-            failed += 1
-            continue
-
-        print(f"{label} — created")
-        created += 1
+            print(f"{player_label} — created")
+            players_created += 1
 
     # -----------------------------------------------------------------------
     # Summary
     # -----------------------------------------------------------------------
-    print(f"\nSummary: {created} created, {skipped} skipped, {failed} failed.")
-    return 0 if failed == 0 else 1
+    print(f"\nSummary:")
+    print(f"  Teams:   {teams_created} created, {teams_skipped} skipped")
+    print(f"  Players: {players_created} created, {players_skipped} skipped, {players_failed} failed")
+    return 0 if players_failed == 0 else 1
 
 
 if __name__ == "__main__":

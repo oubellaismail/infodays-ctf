@@ -34,7 +34,7 @@ def _derive(team_id, challenge_manifest_id, master_secret):
     return f"infodays{{{digest}}}"
 
 
-def _log_cheater(submitting_team_id, submitted_flag, owner_team_id, challenge_manifest_id):
+def _log_cheater(submitting_team_id, submitting_user_id, submitted_flag, owner_team_id, challenge_manifest_id):
     """Insert a row into the cheaters table. Never raises."""
     try:
         from CTFd.models import db
@@ -42,12 +42,13 @@ def _log_cheater(submitting_team_id, submitted_flag, owner_team_id, challenge_ma
         db.session.execute(
             text("""
                 INSERT INTO cheaters
-                    (submitting_team_id, submitted_flag, owner_team_id, challenge_manifest_id, submitted_at)
+                    (submitting_team_id, submitting_user_id, submitted_flag, owner_team_id, challenge_manifest_id, submitted_at)
                 VALUES
-                    (:sub_tid, :flag, :own_tid, :chal, :ts)
+                    (:sub_tid, :sub_uid, :flag, :own_tid, :chal, :ts)
             """),
             {
                 "sub_tid": submitting_team_id,
+                "sub_uid": submitting_user_id,
                 "flag":    submitted_flag,
                 "own_tid": owner_team_id,
                 "chal":    challenge_manifest_id,
@@ -85,11 +86,14 @@ class CTFdTeamFlag:
 
     @staticmethod
     def compare(chal_key_obj, provided):
-        from CTFd.utils.user import get_current_team
+        from CTFd.utils.user import get_current_team, get_current_user
 
         team = get_current_team()
         if team is None:
             return False
+
+        user = get_current_user()
+        user_id = user.id if user else None
 
         challenge_manifest_id = chal_key_obj.data or ""
         master_secret = os.environ.get("CTF_MASTER_SECRET", "")
@@ -108,7 +112,7 @@ class CTFdTeamFlag:
             for other in all_teams:
                 candidate = _derive(other.id, challenge_manifest_id, master_secret)
                 if _hmac.compare_digest(candidate, provided):
-                    _log_cheater(team.id, provided, other.id, challenge_manifest_id)
+                    _log_cheater(team.id, user_id, provided, other.id, challenge_manifest_id)
                     break
         except Exception:
             pass  # Never crash flag validation due to cheating detection
@@ -310,6 +314,8 @@ def load(app):
                         c.id,
                         st.name  AS submitting_team,
                         c.submitting_team_id,
+                        su.name  AS submitting_user,
+                        c.submitting_user_id,
                         c.submitted_flag,
                         ot.name  AS owner_team,
                         c.owner_team_id,
@@ -317,6 +323,7 @@ def load(app):
                         c.submitted_at
                     FROM cheaters c
                     LEFT JOIN teams st ON st.id = c.submitting_team_id
+                    LEFT JOIN users su ON su.id = c.submitting_user_id
                     LEFT JOIN teams ot ON ot.id = c.owner_team_id
                     ORDER BY c.submitted_at DESC
                 """)
@@ -326,6 +333,8 @@ def load(app):
                     "id":                    r.id,
                     "submitting_team":        r.submitting_team,
                     "submitting_team_id":     r.submitting_team_id,
+                    "submitting_user":        r.submitting_user,
+                    "submitting_user_id":     r.submitting_user_id,
                     "submitted_flag":         r.submitted_flag,
                     "owner_team":             r.owner_team,
                     "owner_team_id":          r.owner_team_id,
@@ -352,20 +361,29 @@ def load(app):
         from CTFd.models import Configs, db
         from sqlalchemy import text
 
-        # Create cheaters table if it doesn't exist
-        db.session.execute(text("""
-            CREATE TABLE IF NOT EXISTS cheaters (
-                id                    INT AUTO_INCREMENT PRIMARY KEY,
-                submitting_team_id    INT         NOT NULL,
-                submitted_flag        TEXT        NOT NULL,
-                owner_team_id         INT         NOT NULL,
-                challenge_manifest_id VARCHAR(255) NOT NULL,
-                submitted_at          DATETIME    NOT NULL,
-                INDEX idx_submitting (submitting_team_id),
-                INDEX idx_owner      (owner_team_id)
-            )
-        """))
-        db.session.commit()
+        # Create cheaters table if it doesn't exist.
+        # Wrapped in try/except because ProxySQL may route DDL to the read
+        # replica, which rejects writes.  The table is created by whichever
+        # pod reaches the primary first; subsequent pods can safely skip.
+        try:
+            db.session.execute(text("""
+                CREATE TABLE IF NOT EXISTS cheaters (
+                    id                    INT AUTO_INCREMENT PRIMARY KEY,
+                    submitting_team_id    INT         NOT NULL,
+                    submitting_user_id    INT             NULL,
+                    submitted_flag        TEXT        NOT NULL,
+                    owner_team_id         INT         NOT NULL,
+                    challenge_manifest_id VARCHAR(255) NOT NULL,
+                    submitted_at          DATETIME    NOT NULL,
+                    INDEX idx_submitting (submitting_team_id),
+                    INDEX idx_user       (submitting_user_id),
+                    INDEX idx_owner      (owner_team_id)
+                )
+            """))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.warning("cheaters table CREATE skipped (likely read-replica routing) — table should already exist")
 
         if not Configs.query.filter_by(key="CONTROLLER_URL").first():
             db.session.add(
