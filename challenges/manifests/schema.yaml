@@ -2,30 +2,59 @@
 # Each challenge is described by a YAML file in challenges/manifests/*.yaml
 # This file documents the valid structure.
 
-# Example manifest structure:
+# ── Service challenge example (K8s pods, per-team instances) ──
 # id: web-sqli
 # name: "SQL Injection"
 # category: web              # web | pwn | misc | crypto | forensics | reversing | osint
 # image: registry.digitalocean.com/infodays-registry/web-sqli:latest
-# port: 80                   # Container port
-# type: http                 # http (Ingress) | tcp (NGINX ConfigMap)
-# points: 100
+# port: 8080                 # Container port
+# type: http                 # http (Ingress + HTTPS) | tcp (NodePort + nc)
 # memory_limit: 128Mi        # Optional - defaults to 128Mi
+# initial: 500               # Optional - dynamic scoring start (default: 500)
+# minimum: 50                # Optional - dynamic scoring floor (default: 50)
+# decay: 25                  # Optional - solves to reach minimum (default: 25)
 
-# Field descriptions:
+# ── Static/file challenge example (no pods, file download) ──
+# id: misc-welcome
+# name: "Welcome"
+# category: misc
+# type: static               # No image/port needed
+# description: "Download the file and find the flag."
+# initial: 500               # Optional
+# minimum: 50                # Optional
+# decay: 25                  # Optional
+
+# ── Field descriptions ──
 # - id: Unique challenge identifier (lowercase, hyphenated, e.g., web-sqli)
 # - name: Human-readable challenge name
-# - category: Challenge type (service-based: web/pwn/misc; file-based: crypto/forensics/reversing/osint)
-# - image: Full DOCR image reference (registry.digitalocean.com/infodays-registry/...)
-# - port: Container port the challenge service listens on
-# - type: http = accessible via Ingress + HTTPS subdomain; tcp = accessible via nc command on assigned port
-# - points: Point value in CTFd
-# - memory_limit: Optional Kubernetes memory limit override (must not exceed 128Mi per constitution § V)
+# - category: Challenge category shown in CTFd (web/pwn/misc/crypto/forensics/reversing/osint)
+# - type: Determines deployment strategy:
+#     http   → K8s Deployment + Service + Ingress (HTTPS subdomain per team)
+#     tcp    → K8s Deployment + Service + NodePort (nc access per team)
+#     static → No K8s resources; builds zip with flag, uploads to CTFd as file download
+# - image: Full DOCR image reference (required for http/tcp, not used for static)
+# - port: Container port (required for http/tcp, not used for static)
+# - description: Challenge description shown in CTFd (optional, defaults to "Challenge: {name}")
+# - memory_limit: K8s memory limit override (optional, default: 128Mi, http/tcp only)
+# - initial: Dynamic scoring initial/max points (optional, default: 500)
+# - minimum: Dynamic scoring floor points (optional, default: 50)
+# - decay: Number of solves to reach minimum (optional, default: 25)
 
-# Service challenge categories (create K8s resources):
-# - web, pwn, misc
+# ── Scoring ──
+# All challenges use CTFd dynamic scoring: starts at `initial`, decreases toward
+# `minimum` as teams solve it, reaching minimum after `decay` solves.
+# The old `points` field is ignored — use initial/minimum/decay instead.
 
-# File challenge categories (skipped by bulk_spawn, no K8s pod):
-# - crypto, forensics, reversing, osint
+# ── Deployment by type ──
+# Service challenges (http/tcp):
+#   deploy-challenge.sh → CTFd entry + ConfigMap + bulk_spawn + import_flags
+#   bulk_spawn creates per-team: Deployment (replicas=0), Service, Secret, Ingress/TCP
+#   import_flags creates one team-derived flag row per challenge (HMAC validation)
+#
+# Static challenges:
+#   deploy-challenge.sh → CTFd entry + build zip + upload file + static flag
+#   Flag derived as HMAC(CTF_MASTER_SECRET, "static:{id}") — same for all teams
+#   Custom content: place files in challenges/static-content/{id}/ (included in zip)
+#   No K8s resources created — CTFd's native file download serves the zip
 
 # For more details, see: specs/003-challenge-controller-pod-lifecycle/contracts/challenge-manifest-schema.yaml

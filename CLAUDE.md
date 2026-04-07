@@ -215,11 +215,40 @@ HCL (Terraform ≥1.5); YAML (Kubernetes manifests via TF providers): Follow sta
 - Pwn challenges: port 1337
 - Misc challenges: port 4444
 
+### Dynamic Scoring
+- All challenges use CTFd `type: dynamic` (not `standard`)
+- Defaults: **initial=500**, **minimum=50**, **decay=25** solves
+- Override per-manifest with `initial`, `minimum`, `decay` fields
+- As more teams solve a challenge, its point value decreases from initial toward minimum
+- `decay` = number of solves at which the value reaches the minimum
+
+### Static File Challenges (`type: static`)
+- For challenges with no running service — players download a file (e.g., forensics, crypto)
+- Manifest: set `type: static` (no `image` or `port` needed)
+- Flag: derived as `HMAC(CTF_MASTER_SECRET, "static:{challenge_id}")` — same for all teams
+- Deploy script: builds zip with flag baked in, uploads to CTFd as file attachment, creates static flag
+- `bulk_spawn.py` and `import_flags.py` skip `type: static` challenges (no K8s pods)
+- Plugin UI: hides Start/Stop buttons for unmanaged challenges — CTFd's native download button handles it
+- Custom content: place files in `challenges/static-content/{id}/` and they'll be included in the zip alongside `flag.txt`
+- Example manifest:
+  ```yaml
+  id: misc-welcome
+  name: "Welcome"
+  category: misc
+  type: static
+  description: "Download the file and find the flag."
+  ```
+
 ### Challenge Deployment Automation
 ```bash
 # One-command deployment (recommended):
 bash scripts/deploy-challenge.sh challenges/manifests/<id>.yaml
-# Automates: CTFd creation → ConfigMap update → controller restart → bulk_spawn → flag import
+
+# Service challenges (type: http/tcp):
+#   CTFd creation → ConfigMap update → controller restart → bulk_spawn → flag import
+
+# Static challenges (type: static):
+#   CTFd creation → build zip → upload file → create static flag (no K8s resources)
 ```
 
 ### CTFd Token Auth Quirk
