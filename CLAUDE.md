@@ -74,7 +74,7 @@ scripts/
 ├── setup-docr.sh          # Authenticate Docker to DOCR + DOKS integration
 ├── setup-ctfd.sh          # First-time CTFd setup + configuration
 ├── teardown-challenges.sh # Delete all managed-by=ctf-controller resources
-└── import-teams.py        # Import teams from CSV into CTFd
+└── import-teams.py        # Import teams + individual player accounts from CSV
 
 specs/                     # Feature specs, plans, and design artifacts
 ```
@@ -128,8 +128,11 @@ kubectl apply -f k8s/ctfd/deployment.yaml
 kubectl apply -f k8s/ctfd/ingress.yaml
 bash scripts/setup-mysql-replication.sh          # Configure GTID replication
 
-# Configure CTFd and import teams
+# Configure CTFd and import teams + players
 CTFD_URL=https://ctfd.infodays.net bash scripts/setup-ctfd.sh
+# Or with auto-import during setup:
+CTFD_URL=https://ctfd.infodays.net TEAMS_CSV=data/teams.csv bash scripts/setup-ctfd.sh
+# Or import separately (CSV format: team_name,player_name,email,password):
 python3 scripts/import-teams.py data/teams.csv \
   --ctfd-url https://ctfd.infodays.net \
   --admin-token "$CTFD_ADMIN_TOKEN"
@@ -187,6 +190,16 @@ HCL (Terraform ≥1.5); YAML (Kubernetes manifests via TF providers): Follow sta
 - Controller proxy: Browser → `/controller-proxy/*` (CTFd Flask) → `http://controller-api.ctfd.svc.cluster.local:80` (cluster-internal)
 - Modal detection: Bootstrap 5 `shown.bs.modal` event on `#challenge-window`
 - Challenge ID derivation: `name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "")`
+
+### Player Mode (individual accounts per team)
+- CTFd `user_mode` is `"teams"` — each team has 4 individual player accounts (not 1 shared login)
+- CSV format: `team_name,player_name,email,password` (one row per player, grouped by team_name)
+- Template: `data/teams-template.csv`; real data: `data/teams.csv` (gitignored — contains credentials)
+- Import: `python3 scripts/import-teams.py data/teams.csv` — creates teams + players, first player = captain
+- All downstream systems (controller, flags, isolation, pod cap) use `team_id` — unaffected by player mode
+- `get_current_team()` resolves any player → their team; `get_current_user()` identifies the individual
+- Cheater detection: `cheaters` table includes `submitting_user_id` to identify the exact player
+- ProxySQL workaround: plugin `CREATE TABLE IF NOT EXISTS` wrapped in try/except (DDL may route to replica)
 
 ### Network Policies (challenges namespace)
 - `default-deny-all`: Blocks all ingress/egress by default
