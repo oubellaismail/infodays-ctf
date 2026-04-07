@@ -1,0 +1,10 @@
+id: misc-welcome
+name: "Welcome"
+category: misc
+type: static
+description: "Welcome to InfoDays CTF! Download the file and find the flag."
+# Dynamic scoring (defaults: initial=500, minimum=50, decay=25)
+# Uncomment to override:
+# initial: 500
+# minimum: 50
+# decay: 25

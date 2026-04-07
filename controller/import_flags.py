@@ -163,8 +163,10 @@ def main(ctfd_url: str, admin_token: str) -> None:
 
     challenge_id_map = fetch_challenges(ctfd_url, admin_token)
 
-    # All service challenges need per-team derived flags
-    challenges = [c for c in load_manifests() if c["category"] in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}]
+    # Service challenges need per-team derived flags (static/file challenges handled by deploy script)
+    challenges = [c for c in load_manifests()
+                  if c["category"] in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}
+                  and c.get("type") != "static"]
     logger.info(f"Loaded {len(challenges)} service challenges")
 
     # One team flag row per challenge — no team loop needed

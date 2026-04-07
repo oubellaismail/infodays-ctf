@@ -410,8 +410,10 @@ def main(ctfd_url: str, admin_token: str) -> None:
     teams = fetch_teams(ctfd_url, admin_token)
     logger.info(f"Fetched {len(teams)} teams")
 
-    # Load challenge manifests (all service challenges with per-team pods)
-    challenges = [c for c in load_manifests() if c["category"] in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}]
+    # Load challenge manifests (service challenges only — static/file challenges have no pods)
+    challenges = [c for c in load_manifests()
+                  if c["category"] in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}
+                  and c.get("type") != "static"]
     logger.info(f"Loaded {len(challenges)} service challenges")
 
     # Submit all (team, challenge) pairs to ThreadPoolExecutor

@@ -71,17 +71,29 @@ CHALLENGE_TYPE="$(read_field type)"
 CHALLENGE_POINTS="$(read_field points)"
 CHALLENGE_PORT="$(read_field port)"
 CHALLENGE_IMAGE="$(read_field image)"
+CHALLENGE_DESC="$(read_field description)"
+CHALLENGE_INITIAL="$(read_field initial)"
+CHALLENGE_MINIMUM="$(read_field minimum)"
+CHALLENGE_DECAY="$(read_field decay)"
 
 [ -n "$CHALLENGE_ID" ]       || fail "Manifest missing 'id'"
 [ -n "$CHALLENGE_NAME" ]     || fail "Manifest missing 'name'"
 [ -n "$CHALLENGE_CATEGORY" ] || fail "Manifest missing 'category'"
 [ -n "$CHALLENGE_TYPE" ]     || fail "Manifest missing 'type'"
-[ -n "$CHALLENGE_POINTS" ]   || fail "Manifest missing 'points'"
-[ -n "$CHALLENGE_PORT" ]     || fail "Manifest missing 'port'"
-[ -n "$CHALLENGE_IMAGE" ]    || fail "Manifest missing 'image'"
+
+# Dynamic scoring defaults: 500 initial, 50 minimum, 25 solves to reach minimum
+CHALLENGE_INITIAL="${CHALLENGE_INITIAL:-500}"
+CHALLENGE_MINIMUM="${CHALLENGE_MINIMUM:-50}"
+CHALLENGE_DECAY="${CHALLENGE_DECAY:-25}"
+
+# Service challenges require image + port; static challenges do not
+if [ "$CHALLENGE_TYPE" != "static" ]; then
+  [ -n "$CHALLENGE_PORT" ]   || fail "Manifest missing 'port'"
+  [ -n "$CHALLENGE_IMAGE" ]  || fail "Manifest missing 'image'"
+fi
 
 info "Deploying challenge: $CHALLENGE_NAME ($CHALLENGE_ID)"
-echo "  category=$CHALLENGE_CATEGORY  type=$CHALLENGE_TYPE  port=$CHALLENGE_PORT  points=$CHALLENGE_POINTS"
+echo "  category=$CHALLENGE_CATEGORY  type=$CHALLENGE_TYPE  scoring=${CHALLENGE_INITIAL}→${CHALLENGE_MINIMUM} (decay=${CHALLENGE_DECAY})"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -120,16 +132,20 @@ for ch in data.get('data', []):
 if [ -n "$EXISTING" ]; then
   ok "Already exists in CTFd (id=$EXISTING)"
 else
-  # Create the challenge
+  # Create the challenge with dynamic scoring
+  DESC="${CHALLENGE_DESC:-Challenge: ${CHALLENGE_NAME}}"
   CTFD_CHALLENGE_ID=$(python3 -c "
-import json, urllib.request
+import json, urllib.request, sys
 body = json.dumps({
-    'name': '''${CHALLENGE_NAME}''',
-    'category': '${CHALLENGE_CATEGORY}',
-    'description': 'Challenge: ${CHALLENGE_NAME}',
-    'value': ${CHALLENGE_POINTS},
+    'name': sys.argv[1],
+    'category': sys.argv[2],
+    'description': sys.argv[3],
+    'value': int(sys.argv[4]),
+    'initial': int(sys.argv[4]),
+    'minimum': int(sys.argv[5]),
+    'decay': int(sys.argv[6]),
     'state': 'visible',
-    'type': 'standard'
+    'type': 'dynamic'
 }).encode()
 req = urllib.request.Request(
     '${CTFD_URL}/api/v1/challenges',
@@ -140,9 +156,161 @@ req = urllib.request.Request(
 resp = urllib.request.urlopen(req, timeout=10)
 data = json.loads(resp.read())
 print(data['data']['id'])
-")
+" "$CHALLENGE_NAME" "$CHALLENGE_CATEGORY" "$DESC" "$CHALLENGE_INITIAL" "$CHALLENGE_MINIMUM" "$CHALLENGE_DECAY")
   ok "Created in CTFd (id=$CTFD_CHALLENGE_ID)"
+  EXISTING="$CTFD_CHALLENGE_ID"
 fi
+
+# ===========================================================================
+# Static challenges: build zip, upload file, create flag — no K8s pods
+# ===========================================================================
+if [ "$CHALLENGE_TYPE" = "static" ]; then
+
+  # ---- Step 3: Derive flag and build the challenge zip ----
+  info "Step 3/4: Building static challenge archive"
+
+  STATIC_FLAG=$(python3 -c "
+import hmac, hashlib, os
+secret = os.environ['CTF_MASTER_SECRET']
+msg = 'static:${CHALLENGE_ID}'.encode()
+digest = hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()[:32]
+print('infodays{' + digest + '}')
+")
+
+  DIST_DIR="$PROJECT_ROOT/dist/$CHALLENGE_ID"
+  mkdir -p "$DIST_DIR"
+
+  # Check for custom challenge content directory
+  CONTENT_DIR="$PROJECT_ROOT/challenges/static-content/$CHALLENGE_ID"
+  if [ -d "$CONTENT_DIR" ]; then
+    # Custom content: copy all files + inject flag.txt
+    cp -r "$CONTENT_DIR"/* "$DIST_DIR/" 2>/dev/null || true
+    echo -n "$STATIC_FLAG" > "$DIST_DIR/flag.txt"
+    (cd "$DIST_DIR" && zip -r challenge.zip . >/dev/null)
+    ok "Built challenge.zip from $CONTENT_DIR + flag.txt"
+  else
+    # Default: zip with just flag.txt
+    echo -n "$STATIC_FLAG" > "$DIST_DIR/flag.txt"
+    (cd "$DIST_DIR" && zip -r challenge.zip flag.txt >/dev/null)
+    ok "Built challenge.zip with flag.txt"
+  fi
+
+  # ---- Step 4a: Upload file to CTFd challenge ----
+  info "Step 4/4: Uploading file and creating flag in CTFd"
+
+  CTFD_CID="${EXISTING}"
+  [ -n "$CTFD_CID" ] || fail "No CTFd challenge ID available"
+
+  python3 -c "
+import urllib.request, json, sys, os
+
+ctfd_url = '${CTFD_URL}'
+token = '${CTFD_ADMIN_TOKEN}'
+challenge_id = '${CTFD_CID}'
+zip_path = '${DIST_DIR}/challenge.zip'
+
+# --- Upload file ---
+import mimetypes
+boundary = '----FormBoundary7MA4YWxkTrZu0gW'
+
+with open(zip_path, 'rb') as f:
+    file_data = f.read()
+
+body = (
+    '--' + boundary + '\r\n'
+    'Content-Disposition: form-data; name=\"file\"; filename=\"challenge.zip\"\r\n'
+    'Content-Type: application/zip\r\n\r\n'
+).encode() + file_data + (
+    '\r\n--' + boundary + '\r\n'
+    'Content-Disposition: form-data; name=\"challenge_id\"\r\n\r\n'
+    + challenge_id +
+    '\r\n--' + boundary + '\r\n'
+    'Content-Disposition: form-data; name=\"type\"\r\n\r\n'
+    'challenge'
+    '\r\n--' + boundary + '--\r\n'
+).encode()
+
+req = urllib.request.Request(
+    ctfd_url + '/api/v1/files',
+    data=body,
+    headers={
+        'Authorization': 'Token ' + token,
+        'Content-Type': 'multipart/form-data; boundary=' + boundary,
+    },
+    method='POST'
+)
+resp = urllib.request.urlopen(req, timeout=30)
+result = json.loads(resp.read())
+if result.get('success'):
+    print('FILE_OK')
+else:
+    print('FILE_FAIL: ' + json.dumps(result), file=sys.stderr)
+    sys.exit(1)
+"
+  ok "File uploaded to CTFd"
+
+  # ---- Step 4b: Create static flag ----
+  python3 -c "
+import urllib.request, json, sys
+
+ctfd_url = '${CTFD_URL}'
+token = '${CTFD_ADMIN_TOKEN}'
+challenge_id = '${CTFD_CID}'
+flag = sys.argv[1]
+
+# Check if flag already exists
+req = urllib.request.Request(
+    ctfd_url + '/api/v1/flags?challenge_id=' + challenge_id,
+    headers={'Authorization': 'Token ' + token, 'Content-Type': 'application/json'}
+)
+resp = urllib.request.urlopen(req, timeout=10)
+existing = json.loads(resp.read()).get('data', [])
+if existing:
+    print('FLAG_SKIP')
+    sys.exit(0)
+
+# Create static flag
+body = json.dumps({
+    'challenge_id': int(challenge_id),
+    'content': flag,
+    'type': 'static',
+    'data': ''
+}).encode()
+req = urllib.request.Request(
+    ctfd_url + '/api/v1/flags',
+    data=body,
+    headers={'Authorization': 'Token ' + token, 'Content-Type': 'application/json'},
+    method='POST'
+)
+resp = urllib.request.urlopen(req, timeout=10)
+result = json.loads(resp.read())
+if result.get('success'):
+    print('FLAG_OK')
+else:
+    print('FLAG_FAIL: ' + json.dumps(result), file=sys.stderr)
+    sys.exit(1)
+" "$STATIC_FLAG"
+  ok "Static flag created"
+
+  # ---- Summary ----
+  echo ""
+  echo "======================================"
+  echo " Static challenge deployed: $CHALLENGE_NAME"
+  echo "======================================"
+  echo "  ID:       $CHALLENGE_ID"
+  echo "  Category: $CHALLENGE_CATEGORY"
+  echo "  Type:     static (file download)"
+  echo "  Scoring:  dynamic ($CHALLENGE_INITIAL → $CHALLENGE_MINIMUM, decay=$CHALLENGE_DECAY)"
+  echo "  Flag:     $STATIC_FLAG"
+  echo "  File:     $DIST_DIR/challenge.zip"
+  echo ""
+  echo "Players download the file from the CTFd challenge page."
+  exit 0
+fi
+
+# ===========================================================================
+# Service challenges: K8s pods + controller integration
+# ===========================================================================
 
 # ---------------------------------------------------------------------------
 # Step 3: Update challenge-manifests ConfigMap
@@ -211,7 +379,7 @@ echo "======================================"
 echo "  ID:       $CHALLENGE_ID"
 echo "  Category: $CHALLENGE_CATEGORY"
 echo "  Type:     $CHALLENGE_TYPE"
-echo "  Points:   $CHALLENGE_POINTS"
+echo "  Scoring:  dynamic ($CHALLENGE_INITIAL → $CHALLENGE_MINIMUM, decay=$CHALLENGE_DECAY)"
 
 if [ "$CHALLENGE_TYPE" = "http" ]; then
   echo "  URL:      https://team-{ID}-${CHALLENGE_ID}.challenges.infodays.net"

@@ -12,13 +12,7 @@
 
   // ─── Logo injection (runs for ALL visitors, including unauthenticated) ─────
 
-  var LOGO_DARK_URL  = "/plugins/controller-plugin/assets/logo-dark.png";
-  var LOGO_LIGHT_URL = "/plugins/controller-plugin/assets/logo-light.png";
-
-  function getLogoSrc() {
-    var theme = document.documentElement.getAttribute("data-bs-theme");
-    return theme === "light" ? LOGO_LIGHT_URL : LOGO_DARK_URL;
-  }
+  var LOGO_URL = "/plugins/controller-plugin/assets/logo-dark.png";
 
   function injectLogo() {
     var brand = document.querySelector(".navbar-brand");
@@ -27,24 +21,51 @@
     var img = document.createElement("img");
     img.id  = "ctf-brand-logo";
     img.className = "ctf-logo";
-    img.src = getLogoSrc();
+    img.src = LOGO_URL;
     img.alt = "Infodays CTF";
     img.width = 32;
     img.height = 32;
-    brand.prepend(img);
+    // Remove the text next to the logo — logo only
+    brand.textContent = "";
+    brand.appendChild(img);
   }
 
-  function watchThemeForLogo() {
-    var logo = document.getElementById("ctf-brand-logo");
-    if (!logo) return;
+  function forceDarkMode() {
+    // Always enforce dark mode — toggle button hidden via CSS (.theme-switch)
+    document.documentElement.setAttribute("data-bs-theme", "dark");
+    // If anything tries to flip the theme, snap it back
     new MutationObserver(function() {
-      logo.src = getLogoSrc();
+      if (document.documentElement.getAttribute("data-bs-theme") !== "dark") {
+        document.documentElement.setAttribute("data-bs-theme", "dark");
+      }
     }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-bs-theme"] });
   }
 
+  function injectRulesLink() {
+    var navList = document.querySelector(".navbar-nav");
+    if (!navList) return;
+    // Don't duplicate
+    if (navList.querySelector('a[href="/rules"]')) return;
+    var li = document.createElement("li");
+    li.className = "nav-item";
+    var a = document.createElement("a");
+    a.className = "nav-link";
+    a.href = "/rules";
+    a.textContent = "Rules";
+    li.appendChild(a);
+    // Insert after the first nav item (usually Challenges)
+    var firstItem = navList.querySelector(".nav-item");
+    if (firstItem && firstItem.nextSibling) {
+      navList.insertBefore(li, firstItem.nextSibling);
+    } else {
+      navList.appendChild(li);
+    }
+  }
+
   function initLogo() {
+    forceDarkMode();
     injectLogo();
-    watchThemeForLogo();
+    injectRulesLink();
   }
 
   if (document.readyState === "loading") {
@@ -159,8 +180,15 @@
       return;
     }
 
-    // null means challenge has no instance yet → treat as fresh
-    var status = challenge ? challenge.status : "fresh";
+    // null means challenge is not managed by the controller (e.g. static/file
+    // download challenges). Don't render the Start/Stop UI — CTFd's native
+    // file download handles these.
+    if (challenge === null) {
+      container.innerHTML = "";
+      return;
+    }
+
+    var status = challenge.status || "fresh";
     currentStatus = status;
 
     container.innerHTML = "";
