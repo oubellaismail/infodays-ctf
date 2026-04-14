@@ -21,6 +21,18 @@ resource "helm_release" "cert_manager" {
     value = "true"
   }
 
+  # Use external recursive resolvers so cert-manager can verify DNS-01 propagation
+  # from outside the cluster (CoreDNS inside DOKS cannot resolve external TXT records
+  # for the _acme-challenge prefix, causing permanent "not yet propagated" failures).
+  values = [
+    yamlencode({
+      extraArgs = [
+        "--dns01-recursive-nameservers-only",
+        "--dns01-recursive-nameservers=8.8.8.8:53,1.1.1.1:53",
+      ]
+    })
+  ]
+
   depends_on = [kubernetes_namespace.cert_manager]
 }
 

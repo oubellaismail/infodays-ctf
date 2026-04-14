@@ -273,13 +273,16 @@ def main():
                     "password": pwd, "type": "user",
                 })
                 if r.status_code not in (200, 201):
-                    errs = r.json().get("errors", r.text)
+                    try:
+                        errs = r.json().get("errors", r.text)
+                    except Exception:
+                        errs = r.text or f"HTTP {r.status_code} (empty response)"
                     print(f"{player_label} — FAILED (user creation: {errs})")
                     players_failed += 1
                     continue
                 user_id = r.json()["data"]["id"]
                 existing_users.add(player_name)
-            except requests.RequestException as e:
+            except Exception as e:
                 print(f"{player_label} — FAILED (user creation: {e})")
                 players_failed += 1
                 continue
@@ -311,7 +314,9 @@ def main():
     print(f"\nSummary:")
     print(f"  Teams:   {teams_created} created, {teams_skipped} skipped")
     print(f"  Players: {players_created} created, {players_skipped} skipped, {players_failed} failed")
-    return 0 if players_failed == 0 else 1
+    if players_failed > 0:
+        print(f"  WARNING: {players_failed} player(s) failed — re-run import to retry.", file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":

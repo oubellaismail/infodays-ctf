@@ -162,135 +162,44 @@ print(data['data']['id'])
 fi
 
 # ===========================================================================
-# Static challenges: build zip, upload file, create flag — no K8s pods
+# Static challenges: per-team zips served by plugin, team-derived flags
 # ===========================================================================
 if [ "$CHALLENGE_TYPE" = "static" ]; then
 
-  # ---- Step 3: Derive flag and build the challenge zip ----
-  info "Step 3/4: Building static challenge archive"
+  # ---- Step 3: Update ConfigMap (so import_flags picks up the manifest) ----
+  info "Step 3/5: Updating challenge-manifests ConfigMap"
 
-  STATIC_FLAG=$(python3 -c "
-import hmac, hashlib, os
-secret = os.environ['CTF_MASTER_SECRET']
-msg = 'static:${CHALLENGE_ID}'.encode()
-digest = hmac.new(secret.encode(), msg, hashlib.sha256).hexdigest()[:32]
-print('infodays{' + digest + '}')
-")
+  kubectl create configmap challenge-manifests \
+    --from-file="$MANIFESTS_DIR" \
+    -n "$CTFD_NAMESPACE" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
-  DIST_DIR="$PROJECT_ROOT/dist/$CHALLENGE_ID"
-  mkdir -p "$DIST_DIR"
+  ok "ConfigMap updated"
 
-  # Check for custom challenge content directory
-  CONTENT_DIR="$PROJECT_ROOT/challenges/static-content/$CHALLENGE_ID"
-  if [ -d "$CONTENT_DIR" ]; then
-    # Custom content: copy all files + inject flag.txt
-    cp -r "$CONTENT_DIR"/* "$DIST_DIR/" 2>/dev/null || true
-    echo -n "$STATIC_FLAG" > "$DIST_DIR/flag.txt"
-    (cd "$DIST_DIR" && zip -r challenge.zip . >/dev/null)
-    ok "Built challenge.zip from $CONTENT_DIR + flag.txt"
-  else
-    # Default: zip with just flag.txt
-    echo -n "$STATIC_FLAG" > "$DIST_DIR/flag.txt"
-    (cd "$DIST_DIR" && zip -r challenge.zip flag.txt >/dev/null)
-    ok "Built challenge.zip with flag.txt"
-  fi
+  # ---- Step 4: Restart controller API (to reload manifest cache) ----
+  info "Step 4/5: Restarting controller API"
 
-  # ---- Step 4a: Upload file to CTFd challenge ----
-  info "Step 4/4: Uploading file and creating flag in CTFd"
+  kubectl rollout restart deployment/controller-api -n "$CTFD_NAMESPACE" >/dev/null
+  kubectl rollout status deployment/controller-api -n "$CTFD_NAMESPACE" --timeout=60s >/dev/null
 
-  CTFD_CID="${EXISTING}"
-  [ -n "$CTFD_CID" ] || fail "No CTFd challenge ID available"
+  ok "Controller API restarted"
 
-  python3 -c "
-import urllib.request, json, sys, os
+  # ---- Step 5: Import team-derived flag into CTFd ----
+  info "Step 5/5: Importing team-derived flag into CTFd"
 
-ctfd_url = '${CTFD_URL}'
-token = '${CTFD_ADMIN_TOKEN}'
-challenge_id = '${CTFD_CID}'
-zip_path = '${DIST_DIR}/challenge.zip'
+  CONTROLLER_POD=$(kubectl get pods -n "$CTFD_NAMESPACE" -l app=controller-api \
+    --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
 
-# --- Upload file ---
-import mimetypes
-boundary = '----FormBoundary7MA4YWxkTrZu0gW'
+  [ -n "$CONTROLLER_POD" ] || fail "No running controller-api pod found"
 
-with open(zip_path, 'rb') as f:
-    file_data = f.read()
+  kubectl exec -n "$CTFD_NAMESPACE" "$CONTROLLER_POD" -- \
+    env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
+    python3 /app/import_flags.py \
+      --ctfd-url "$CTFD_URL" 2>&1 | while IFS= read -r line; do
+    echo "    $line"
+  done
 
-body = (
-    '--' + boundary + '\r\n'
-    'Content-Disposition: form-data; name=\"file\"; filename=\"challenge.zip\"\r\n'
-    'Content-Type: application/zip\r\n\r\n'
-).encode() + file_data + (
-    '\r\n--' + boundary + '\r\n'
-    'Content-Disposition: form-data; name=\"challenge_id\"\r\n\r\n'
-    + challenge_id +
-    '\r\n--' + boundary + '\r\n'
-    'Content-Disposition: form-data; name=\"type\"\r\n\r\n'
-    'challenge'
-    '\r\n--' + boundary + '--\r\n'
-).encode()
-
-req = urllib.request.Request(
-    ctfd_url + '/api/v1/files',
-    data=body,
-    headers={
-        'Authorization': 'Token ' + token,
-        'Content-Type': 'multipart/form-data; boundary=' + boundary,
-    },
-    method='POST'
-)
-resp = urllib.request.urlopen(req, timeout=30)
-result = json.loads(resp.read())
-if result.get('success'):
-    print('FILE_OK')
-else:
-    print('FILE_FAIL: ' + json.dumps(result), file=sys.stderr)
-    sys.exit(1)
-"
-  ok "File uploaded to CTFd"
-
-  # ---- Step 4b: Create static flag ----
-  python3 -c "
-import urllib.request, json, sys
-
-ctfd_url = '${CTFD_URL}'
-token = '${CTFD_ADMIN_TOKEN}'
-challenge_id = '${CTFD_CID}'
-flag = sys.argv[1]
-
-# Check if flag already exists
-req = urllib.request.Request(
-    ctfd_url + '/api/v1/flags?challenge_id=' + challenge_id,
-    headers={'Authorization': 'Token ' + token, 'Content-Type': 'application/json'}
-)
-resp = urllib.request.urlopen(req, timeout=10)
-existing = json.loads(resp.read()).get('data', [])
-if existing:
-    print('FLAG_SKIP')
-    sys.exit(0)
-
-# Create static flag
-body = json.dumps({
-    'challenge_id': int(challenge_id),
-    'content': flag,
-    'type': 'static',
-    'data': ''
-}).encode()
-req = urllib.request.Request(
-    ctfd_url + '/api/v1/flags',
-    data=body,
-    headers={'Authorization': 'Token ' + token, 'Content-Type': 'application/json'},
-    method='POST'
-)
-resp = urllib.request.urlopen(req, timeout=10)
-result = json.loads(resp.read())
-if result.get('success'):
-    print('FLAG_OK')
-else:
-    print('FLAG_FAIL: ' + json.dumps(result), file=sys.stderr)
-    sys.exit(1)
-" "$STATIC_FLAG"
-  ok "Static flag created"
+  ok "Team-derived flag imported"
 
   # ---- Summary ----
   echo ""
@@ -299,12 +208,11 @@ else:
   echo "======================================"
   echo "  ID:       $CHALLENGE_ID"
   echo "  Category: $CHALLENGE_CATEGORY"
-  echo "  Type:     static (file download)"
+  echo "  Type:     static (per-team file download)"
   echo "  Scoring:  dynamic ($CHALLENGE_INITIAL → $CHALLENGE_MINIMUM, decay=$CHALLENGE_DECAY)"
-  echo "  Flag:     $STATIC_FLAG"
-  echo "  File:     $DIST_DIR/challenge.zip"
+  echo "  Download: /download/$CHALLENGE_ID (plugin endpoint, per-team zip)"
   echo ""
-  echo "Players download the file from the CTFd challenge page."
+  echo "Players download the file from the challenge modal (per-team zip with unique flag)."
   exit 0
 fi
 

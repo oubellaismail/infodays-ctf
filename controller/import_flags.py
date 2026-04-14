@@ -163,11 +163,12 @@ def main(ctfd_url: str, admin_token: str) -> None:
 
     challenge_id_map = fetch_challenges(ctfd_url, admin_token)
 
-    # Service challenges need per-team derived flags (static/file challenges handled by deploy script)
+    # All challenges (service + static) use the custom 'team' flag type with
+    # HMAC-derived per-team flags. Static challenges serve per-team zips via
+    # the plugin download endpoint; service challenges validate on submission.
     challenges = [c for c in load_manifests()
-                  if c["category"] in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}
-                  and c.get("type") != "static"]
-    logger.info(f"Loaded {len(challenges)} service challenges")
+                  if c["category"] in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}]
+    logger.info(f"Loaded {len(challenges)} challenges (service + static)")
 
     # One team flag row per challenge — no team loop needed
     created = 0
