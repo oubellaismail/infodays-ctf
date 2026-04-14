@@ -180,11 +180,29 @@
       return;
     }
 
-    // null means challenge is not managed by the controller (e.g. static/file
-    // download challenges). Don't render the Start/Stop UI — CTFd's native
-    // file download handles these.
+    // null means challenge is not managed by the controller (static/file
+    // download challenges). Show a download button pointing to the plugin's
+    // per-team zip endpoint.
     if (challenge === null) {
       container.innerHTML = "";
+      if (currentChallengeId) {
+        var dlRow = document.createElement("div");
+        dlRow.className = "ctf-controller-row";
+
+        var badge = document.createElement("span");
+        badge.className = "ctf-badge ctf-badge--download";
+        badge.textContent = "File Challenge";
+        dlRow.appendChild(badge);
+
+        var dlBtn = document.createElement("a");
+        dlBtn.href = "/download/" + currentChallengeId;
+        dlBtn.className = "btn btn-sm btn-primary";
+        dlBtn.textContent = "\u2B07 Download Challenge";
+        dlBtn.setAttribute("download", "");
+        dlRow.appendChild(dlBtn);
+
+        container.appendChild(dlRow);
+      }
       return;
     }
 

@@ -31,30 +31,9 @@ This contract defines the CSS class names emitted by `plugin.js` and the custom 
 }
 ```
 
-### Light Mode — `[data-bs-theme="light"]`
+### Light Mode
 
-```css
-[data-bs-theme="light"] {
-  --bs-body-bg:           #F2F5FC;
-  --bs-body-color:        #0A1628;
-  --bs-card-bg:           #FFFFFF;
-  --bs-primary:           #2563EB;
-  --bs-primary-rgb:       37, 99, 235;
-  --bs-secondary-bg:      #DDE6F5;
-  --bs-tertiary-bg:       #EBF0F8;
-  --bs-secondary-color:   #4A5E78;
-  --bs-border-color:      #C4CDD9;
-  --bs-danger:            #B91C1C;
-  --bs-success:           #15803D;
-  --bs-font-sans-serif:   'Inter', system-ui, -apple-system, sans-serif;
-  --ctf-brand-accent:     #E84B2A;
-  --ctf-badge-running-bg: #15803D;
-  --ctf-badge-muted-bg:   #DDE6F5;
-  --ctf-badge-error-bg:   #B91C1C;
-  --ctf-ui-bg:            rgba(0, 0, 0, 0.03);
-  --ctf-ui-border:        #C4CDD9;
-}
-```
+Light mode has been removed. The platform is dark-only — the theme toggle is hidden via `.theme-switch { display: none !important; }`. See `specs/design/colors.md` for the archived light palette reference.
 
 ---
 

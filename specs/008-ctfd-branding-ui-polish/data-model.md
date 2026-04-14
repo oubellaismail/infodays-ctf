@@ -6,13 +6,12 @@ No persistent data entities. This feature is purely presentational — it change
 
 ### Color Token
 
-A named CSS custom property with a dark-mode value and a light-mode value.
+A named CSS custom property with a dark-mode value (dark-only platform).
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | string | CSS variable name, e.g. `--bs-body-bg` |
 | `dark_value` | hex string | Value when `data-bs-theme="dark"` |
-| `light_value` | hex string | Value when `data-bs-theme="light"` |
 | `bootstrap_variable` | string | The Bootstrap 5 variable being overridden |
 
 Full token set defined in `specs/design/colors.md`.
@@ -21,14 +20,13 @@ Full token set defined in `specs/design/colors.md`.
 
 ### Theme Mode
 
-The active color scheme for the platform. Controlled by CTFd; read by the plugin.
+The platform is dark-only. The CTFd theme toggle is hidden via CSS.
 
 | Value | Description | Logo Variant |
 |-------|-------------|-------------|
-| `dark` | Default. Near-black navy backgrounds. | `logo-dark.png` |
-| `light` | Light blue-gray backgrounds. | `logo-light.png` |
+| `dark` | Only mode. Near-black navy backgrounds. | `logo-dark.png` |
 
-**State carrier**: `data-bs-theme` attribute on `<html>` element. Set by CTFd on page load from user preference. Changed by CTFd theme toggle (causes full page reload).
+**State carrier**: `data-bs-theme="dark"` attribute on `<html>` element. Always dark — theme toggle hidden via `.theme-switch { display: none !important; }`.
 
 ---
 
@@ -55,11 +53,12 @@ running → error (on API failure)
 
 ### Logo Variant
 
-The logo image file served based on active theme mode.
+The logo image file used on the dark-only platform.
 
 | Variant | File | Background suitability |
 |---------|------|----------------------|
 | Dark mode logo | `ctfd-plugin/assets/logo-dark.png` | Dark backgrounds (glowing white wordmark) |
-| Light mode logo | `ctfd-plugin/assets/logo-light.png` | Light backgrounds (solid wordmark) |
 
-Served at: `/plugins/ctfd_plugin/static/logo-{dark,light}.png`
+Served at: `/plugins/ctfd_plugin/static/logo-dark.png`
+
+> **Note**: `logo-light.png` exists in the assets directory but is not used — the platform is dark-only.

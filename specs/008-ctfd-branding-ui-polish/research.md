@@ -2,26 +2,26 @@
 
 ## 1. Bootstrap 5 CSS Variable Scoping with `data-bs-theme`
 
-**Decision**: Use `[data-bs-theme="dark"]` and `[data-bs-theme="light"]` attribute selectors as the root of all token overrides.
+**Decision**: Use `[data-bs-theme="dark"]` attribute selector as the root of all token overrides. Platform is dark-only — light mode removed, theme toggle hidden.
 
-**Rationale**: Bootstrap 5.3+ introduced native color mode support. It reads CSS custom properties (`--bs-body-bg`, `--bs-body-color`, `--bs-primary`, etc.) from the element carrying `data-bs-theme`. By placing our overrides on these same selectors we get zero-specificity-conflict theming — no `!important` needed. All Bootstrap components inherit from the root element automatically.
+**Rationale**: Bootstrap 5.3+ introduced native color mode support. It reads CSS custom properties (`--bs-body-bg`, `--bs-body-color`, `--bs-primary`, etc.) from the element carrying `data-bs-theme`. By placing our overrides on the dark selector we get zero-specificity-conflict theming. The theme toggle is hidden via `.theme-switch { display: none !important; }` to enforce dark-only.
 
 **Key Bootstrap 5 variables to override**:
 
-| Bootstrap Variable | Maps to Token | Dark Value | Light Value |
-|---|---|---|---|
-| `--bs-body-bg` | Background | `#020511` | `#F2F5FC` |
-| `--bs-body-color` | Foreground/Text | `#D6DFEC` | `#0A1628` |
-| `--bs-card-bg` | Card | `#070D1A` | `#FFFFFF` |
-| `--bs-primary` | Primary | `#397BE9` | `#2563EB` |
-| `--bs-primary-rgb` | Primary (RGB) | `57, 123, 233` | `37, 99, 235` |
-| `--bs-secondary-bg` | Secondary | `#162235` | `#DDE6F5` |
-| `--bs-tertiary-bg` | Muted | `#0E1624` | `#EBF0F8` |
-| `--bs-secondary-color` | Muted Foreground | `#7E90AE` | `#4A5E78` |
-| `--bs-border-color` | Border/Input | `#192230` | `#C4CDD9` |
-| `--bs-danger` | Destructive | `#861118` | `#B91C1C` |
-| `--bs-success` | Running status | `#1A7F4E` | `#15803D` |
-| `--bs-font-sans-serif` | Body font | `'Inter', system-ui, sans-serif` | same |
+| Bootstrap Variable | Maps to Token | Dark Value |
+|---|---|---|
+| `--bs-body-bg` | Background | `#020511` |
+| `--bs-body-color` | Foreground/Text | `#D6DFEC` |
+| `--bs-card-bg` | Card | `#0A1120` |
+| `--bs-primary` | Primary | `#397BE9` |
+| `--bs-primary-rgb` | Primary (RGB) | `57, 123, 233` |
+| `--bs-secondary-bg` | Secondary | `#111B2E` |
+| `--bs-tertiary-bg` | Muted | `#0E1624` |
+| `--bs-secondary-color` | Muted Foreground | `#7E90AE` |
+| `--bs-border-color` | Border/Input | `#1A2538` |
+| `--bs-danger` | Destructive | `#861118` |
+| `--bs-success` | Running status | `#1A7F4E` |
+| `--bs-font-sans-serif` | Body font | `'Inter', system-ui, sans-serif` |
 
 **Alternatives considered**: Overriding Bootstrap via `_variables.scss` recompile — rejected because CTFd ships pre-compiled Bootstrap and we cannot modify CTFd source.
 
@@ -35,7 +35,7 @@
 - Our CSS selectors activate automatically on load
 - Theme switches trigger a full page reload in CTFd (not a client-side toggle)
 
-**Implication for logo swap**: Because CTFd's theme switch causes a full page reload, the MutationObserver for logo swapping is a progressive enhancement — useful if CTFd ever adopts client-side switching, but the primary mechanism is simply reading `data-bs-theme` on `DOMContentLoaded` and setting the correct logo `src` once.
+**Implication for dark-only**: The theme toggle is hidden, so no logo swap is needed. The plugin inserts `logo-dark.png` on DOM load.
 
 ---
 
@@ -91,18 +91,16 @@ https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBr
 
 ---
 
-## 6. MutationObserver for Logo Theme Swap
+## 6. Logo Injection (Dark-Only)
 
-**Decision**: Observe `<html>` for `data-bs-theme` attribute changes using `MutationObserver`. On change, update logo `src` to the appropriate variant.
+**Decision**: Insert `logo-dark.png` into the navbar on DOM load. No MutationObserver needed — the platform is dark-only (theme toggle hidden).
 
 ```javascript
-const observer = new MutationObserver(() => {
-  const theme = document.documentElement.getAttribute('data-bs-theme');
-  logo.src = theme === 'light' ? LOGO_LIGHT_URL : LOGO_DARK_URL;
-});
-observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-bs-theme'] });
+// On DOMContentLoaded: insert logo into .navbar-brand
+const logo = document.createElement('img');
+logo.src = LOGO_DARK_URL;
+logo.className = 'ctf-logo';
+navbarBrand.prepend(logo);
 ```
 
-**On initial load**: Read `data-bs-theme` once on `DOMContentLoaded` and set logo `src` before attaching the observer.
-
-**Note**: Since CTFd currently reloads on theme switch, the observer fires after reload — initial load handling is the primary path. Observer provides future-proofing for client-side switching.
+**Note**: The MutationObserver for theme swapping was removed when light mode support was dropped.

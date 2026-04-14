@@ -18,7 +18,7 @@ A student opens CTFd for the first time during the Infodays CTF event. Instead o
 **Acceptance Scenarios**:
 
 1. **Given** a participant loads `https://ctfd.infodays.net`, **When** the page renders, **Then** the background is deep navy (`#020511`), body text is light blue-gray (`#D6DFEC`), and the Infodays logo is visible in the navigation bar.
-2. **Given** the platform is in dark mode (default), **When** a participant switches to light mode via CTFd settings, **Then** the page re-renders with the light palette and the light-mode logo variant without a full page reload.
+2. **Given** the platform is dark-only, **When** a participant looks for a theme toggle, **Then** the toggle is hidden and the platform remains in dark mode.
 3. **Given** a participant views any page, **When** they observe the typography, **Then** all UI text renders in Inter and all data output (flags, ports, IP addresses, nc commands) renders in JetBrains Mono.
 
 ---
@@ -36,7 +36,7 @@ A participant opens a web challenge modal and sees the Start/Stop instance panel
 1. **Given** a participant opens a challenge modal with no active instance, **When** the panel renders, **Then** the status badge displays in muted gray and the Start button uses the primary blue (`#397BE9`).
 2. **Given** a participant has an active running instance, **When** the status refreshes to "Running," **Then** the badge turns success green and the instance URL displays as a clickable link in JetBrains Mono.
 3. **Given** a TCP challenge (pwn/misc) is running, **When** the participant views the connection info, **Then** the `nc <host> <port>` command displays in a monospace block styled to the dark card surface — easy to select and copy.
-4. **Given** the platform is in light mode, **When** a participant opens the challenge modal, **Then** the instance panel adapts to the light palette with no hardcoded dark values visible.
+4. ~~Light mode scenario removed — platform is dark-only (theme toggle hidden).~~
 
 ---
 
@@ -58,31 +58,31 @@ An admin or participant navigating the scoreboard, team pages, and challenge lis
 ### Edge Cases
 
 - What happens when the participant's browser cannot load Google Fonts (offline or network-restricted)? The platform must remain readable using system sans-serif and system monospace fallbacks.
-- What happens when CTFd's theme switching fires before the plugin's theme observer is attached? The logo must reflect the correct variant on initial page load — not only on subsequent switches.
+- ~~Theme switching edge case removed — platform is dark-only (theme toggle hidden).~~
 - What happens on file-based challenge categories (crypto, forensics, reversing, osint)? The plugin must not inject the instance manager UI into these challenge modals.
-- What happens if a participant's browser forces a color scheme independently? The platform's explicit theme attribute must take precedence.
+- What happens if a participant's browser forces a color scheme independently? The platform is dark-only — the theme toggle is hidden via CSS and only dark mode tokens are defined.
 
 ## Requirements *(mandatory)*
 
 ### Functional Requirements
 
 - **FR-001**: The platform MUST display the Infodays dark color palette by default on all pages, overriding Bootstrap 5 default colors via CSS custom property mapping.
-- **FR-002**: The platform MUST support light mode: when the active theme is switched to light, the full light palette MUST apply across all styled components simultaneously without a page reload.
-- **FR-003**: The Infodays logo MUST appear in the CTFd navigation bar on all pages, displaying the dark-mode variant in dark mode and the light-mode variant in light mode.
-- **FR-004**: The logo variant MUST swap automatically when the theme changes — no page reload required.
+- **FR-002**: The platform is dark-only. The theme toggle MUST be hidden via CSS. Light mode CSS variables are not defined.
+- **FR-003**: The Infodays logo MUST appear in the CTFd navigation bar on all pages, displaying the dark-mode variant (`logo-dark.png`).
+- **FR-004**: ~~Logo swap removed — platform is dark-only; only `logo-dark.png` is used.~~
 - **FR-005**: All UI body text MUST render in Inter. All data outputs — flags, ports, IP addresses, nc commands, and code elements — MUST render in JetBrains Mono.
 - **FR-006**: The challenge instance manager panel MUST use CSS class-based styling exclusively — zero hardcoded color values MUST remain in `plugin.js`.
 - **FR-007**: Status badges MUST communicate instance state through both color and text label: Running (success green), Suspended (muted gray), Fresh/Not Started (muted gray), Error (destructive red).
-- **FR-008**: The instance panel MUST display correctly in both dark and light modes with no hardcoded dark or light values bleeding through.
+- **FR-008**: The instance panel MUST display correctly in dark mode with no hardcoded values bleeding through.
 - **FR-009**: The branding changes MUST NOT break any existing CTFd functionality: flag submission, scoreboard, team management, and admin pages MUST remain fully operational.
 - **FR-010**: Font assets MUST load via Google Fonts CDN with system-font fallbacks for offline or restricted-network environments.
 - **FR-011**: The instance manager UI MUST only appear on service-based challenges (web, pwn, misc) — it MUST NOT inject into crypto, forensics, reversing, or osint modals.
 
 ### Key Entities
 
-- **Color Token**: A named design variable with a dark-mode hex value and a light-mode hex value, mapped to a Bootstrap 5 CSS variable. Full set defined in `specs/design/colors.md`.
-- **Theme Mode**: Either `dark` (default) or `light`, controlled by the `data-bs-theme` attribute on the page root. CTFd manages the toggle; the plugin responds to it.
-- **Logo Variant**: Either `logo-dark.png` (for dark backgrounds) or `logo-light.png` (for light backgrounds), served as static assets from the plugin Blueprint.
+- **Color Token**: A named design variable with a dark-mode hex value, mapped to a Bootstrap 5 CSS variable. Full set defined in `specs/design/colors.md`.
+- **Theme Mode**: Dark-only. The `data-bs-theme="dark"` attribute is set on the page root. The theme toggle is hidden via `.theme-switch { display: none }`.
+- **Logo Variant**: `logo-dark.png` only (for dark backgrounds), served as a static asset from the plugin Blueprint.
 - **Instance Panel**: The custom UI block injected by the plugin into service challenge modals — contains the status badge, Start/Stop button, and instance URL or nc command display.
 
 ## Success Criteria *(mandatory)*
@@ -90,10 +90,10 @@ An admin or participant navigating the scoreboard, team pages, and challenge lis
 ### Measurable Outcomes
 
 - **SC-001**: Every page of the CTFd platform displays the Infodays dark palette by default — zero default Bootstrap blue or white backgrounds appear on any core page in dark mode.
-- **SC-002**: Theme switching from dark to light completes visually in under 100ms with no flash of unstyled content and no page reload.
+- **SC-002**: ~~Theme switching removed — platform is dark-only (theme toggle hidden).~~
 - **SC-003**: The Infodays logo is visible on 100% of CTFd pages in the navigation bar, displaying the correct variant for the active theme.
 - **SC-004**: Zero hardcoded color values remain in `plugin.js` — all appearance is CSS-driven, verifiable by code review.
-- **SC-005**: The challenge instance panel is visually consistent with the surrounding CTFd UI in both dark and light modes — no element appears with a mismatched background or text color.
+- **SC-005**: The challenge instance panel is visually consistent with the surrounding CTFd UI in dark mode — no element appears with a mismatched background or text color.
 - **SC-006**: All existing CTFd functionality operates without errors after branding changes are applied — flag submission, scoreboard, and team pages produce zero new console errors.
 - **SC-007**: Inter applies to all UI text and JetBrains Mono applies to all nc commands, flag strings, and port/IP displays — verifiable by visual inspection on the challenge modal.
 
@@ -103,7 +103,7 @@ An admin or participant navigating the scoreboard, team pages, and challenge lis
 - Google Fonts CDN is accessible from participant browsers during the event. Fallback stacks handle the offline case.
 - The plugin Blueprint's static asset path is accessible at a predictable URL route.
 - No CTFd source files will be modified — all changes go through the plugin injection point only.
-- The light logo (`logo-light.png`) is accepted as-is for Phase 8 even though its purple tone does not perfectly match the canonical blue primary. A logo update may follow in a later pass.
+- The platform is dark-only — `logo-light.png` is not used in production.
 - A brand-appropriate success green will be defined in the stylesheet for the "Running" status badge, replacing the current hardcoded `#28a745`.
 
 ## Dependencies

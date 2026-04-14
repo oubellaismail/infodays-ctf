@@ -30,28 +30,9 @@
   --ctf-ui-border:        #1A2538;
 }
 
-/* ── Light Mode ───────────────────────────────────────────── */
-[data-bs-theme="light"] {
-  --bs-body-bg:           #F2F5FC;
-  --bs-body-color:        #0A1628;
-  --bs-card-bg:           #FFFFFF;
-  --bs-primary:           #2563EB;
-  --bs-primary-rgb:       37, 99, 235;
-  --bs-secondary-bg:      #DDE6F5;
-  --bs-tertiary-bg:       #EBF0F8;
-  --bs-secondary-color:   #4A5E78;
-  --bs-border-color:      #C4CDD9;
-  --bs-danger:            #B91C1C;
-  --bs-danger-rgb:        185, 28, 28;
-  --bs-success:           #15803D;
-  --bs-success-rgb:       21, 128, 61;
-  --bs-font-sans-serif:   'Inter', system-ui, -apple-system, sans-serif;
-  --ctf-badge-running-bg: #15803D;
-  --ctf-badge-muted-bg:   #DDE6F5;
-  --ctf-badge-muted-color:#4A5E78;
-  --ctf-badge-error-bg:   #B91C1C;
-  --ctf-ui-bg:            rgba(0, 0, 0, 0.03);
-  --ctf-ui-border:        #C4CDD9;
+/* ── Dark-only: hide theme toggle ────────────────────────── */
+.theme-switch {
+  display: none !important;
 }
 
 /* ── Global Typography — !important to beat CTFd's own CSS ── */
@@ -160,9 +141,6 @@ code, pre, kbd, samp,
   border-bottom: 1px solid var(--bs-border-color);
 }
 
-[data-bs-theme="light"] .navbar {
-  background-color: rgba(242, 245, 252, 0.85) !important;
-}
 
 .navbar .nav-link,
 .navbar .navbar-brand {
@@ -451,6 +429,11 @@ footer,
 
 .ctf-badge--error {
   background: var(--ctf-badge-error-bg);
+}
+
+.ctf-badge--download {
+  background: var(--ctf-accent);
+  color: #fff;
 }
 
 /* Instance connection info */

@@ -5,7 +5,7 @@
 
 ## Summary
 
-Apply the Infodays brand identity to the CTFd platform entirely through the existing CTFd plugin injection point — no CTFd source modifications. Three files change: a new `style.css` introduces CSS custom property overrides for both dark and light palettes mapped to Bootstrap 5 variables; `plugin.js` is refactored to replace all inline `style` assignments with CSS class names; `__init__.py` is updated to inject the stylesheet and Google Fonts CDN link. A MutationObserver in the plugin handles logo swapping between `logo-dark.png` and `logo-light.png` when `data-bs-theme` changes on `<html>`. Design decisions are fully pre-defined in `.impeccable.md` and `specs/design/colors.md`.
+Apply the Infodays brand identity to the CTFd platform entirely through the existing CTFd plugin injection point — no CTFd source modifications. Three files change: a new `style.css` introduces CSS custom property overrides for the dark palette mapped to Bootstrap 5 variables (dark-only — light mode removed, theme toggle hidden); `plugin.js` is refactored to replace all inline `style` assignments with CSS class names; `__init__.py` is updated to inject the stylesheet and Google Fonts CDN link. The plugin injects `logo-dark.png` into the navbar on DOM load. Design decisions are fully pre-defined in `.impeccable.md` and `specs/design/colors.md`.
 
 ---
 
@@ -14,10 +14,10 @@ Apply the Infodays brand identity to the CTFd platform entirely through the exis
 **Language/Version**: CSS3, Vanilla JavaScript (ES5/ES6), Python 3.11+ (Flask/CTFd plugin)
 **Primary Dependencies**: Bootstrap 5 (bundled with CTFd), Google Fonts CDN (Inter + JetBrains Mono), CTFd Blueprint static serving
 **Storage**: N/A — no persistent data involved
-**Testing**: Manual visual inspection in browser (dark + light mode); existing CTFd acceptance tests (`infra/tests/validate-ctfd.sh`) must continue to pass
+**Testing**: Manual visual inspection in browser (dark mode only); existing CTFd acceptance tests (`infra/tests/validate-ctfd.sh`) must continue to pass
 **Target Platform**: CTFd Flask app (DOKS pod, `ctfd` namespace); plugin assets served via Blueprint static route
 **Project Type**: Frontend CSS/JS injection via CTFd plugin
-**Performance Goals**: Theme switch visual transition < 100ms; zero flash of unstyled content on page load
+**Performance Goals**: Zero flash of unstyled content on page load
 **Constraints**: No build step, no npm, no bundler; vanilla JS only; all changes through plugin injection point; must not modify CTFd source files
 **Scale/Scope**: Affects all CTFd pages globally (~10 page types); 1 custom UI component (instance manager panel)
 
@@ -62,7 +62,7 @@ specs/008-ctfd-branding-ui-polish/
 ctfd-plugin/
 ├── __init__.py          # Updated: inject style.css link + Google Fonts CDN link
 └── assets/
-    ├── style.css        # NEW: CSS custom properties (dark + light), Bootstrap overrides, component classes
+    ├── style.css        # NEW: CSS custom properties (dark-only), Bootstrap overrides, component classes
     ├── plugin.js        # Updated: inline styles → CSS classes; logo injection + MutationObserver
     ├── logo-dark.png    # Already in place — glowing white wordmark
     └── logo-light.png   # Already in place — solid wordmark
@@ -102,14 +102,14 @@ Key questions resolved:
 
 ### CSS Architecture
 
-The entire theming is achieved via a single CSS file (`style.css`) with two theme blocks:
+The entire theming is achieved via a single CSS file (`style.css`) with a dark-only theme block:
 
 ```css
 [data-bs-theme="dark"]  { /* dark token overrides */ }
-[data-bs-theme="light"] { /* light token overrides */ }
+.theme-switch { display: none !important; } /* hide CTFd theme toggle */
 ```
 
-Bootstrap 5 reads `--bs-body-bg`, `--bs-body-color`, `--bs-primary`, etc. from the nearest ancestor with `data-bs-theme`. Our overrides replace the defaults with the Infodays palette. No `!important` needed — specificity via attribute selector is sufficient.
+Bootstrap 5 reads `--bs-body-bg`, `--bs-body-color`, `--bs-primary`, etc. from the nearest ancestor with `data-bs-theme`. Our overrides replace the defaults with the Infodays dark palette. Light mode is not supported — the theme toggle is hidden via CSS.
 
 ### Component Class Strategy
 
@@ -129,11 +129,9 @@ Bootstrap 5 reads `--bs-body-bg`, `--bs-body-color`, `--bs-primary`, etc. from t
 
 ### Logo Injection Strategy
 
-- `__init__.py` registers a small inline script (or `plugin.js` handles it) that:
+- `plugin.js` handles logo injection:
   1. On DOM load: inserts `<img class="ctf-logo">` into CTFd's `.navbar-brand`
-  2. Sets `src` based on current `data-bs-theme` value
-  3. Attaches a `MutationObserver` on `<html>` watching the `data-bs-theme` attribute
-  4. On attribute change: updates `src` to the correct logo variant
+  2. Sets `src` to `logo-dark.png` (dark-only platform — no theme swapping needed)
 
 ### Font Injection Strategy
 

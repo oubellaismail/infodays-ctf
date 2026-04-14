@@ -19,7 +19,9 @@
 | Border / Input | `#192230` | Borders, input outlines |
 | Destructive | `#861118` | Errors, delete actions |
 
-## Light Mode
+## Light Mode (archived — not implemented)
+
+> **Note**: Light mode has been removed from the platform. The theme toggle is hidden and only dark mode tokens are defined in `style.css`. This palette is retained as a design reference only.
 
 | Token | Hex | Usage |
 |-------|-----|-------|
@@ -46,7 +48,7 @@
 
 ## Notes
 
-- Dark mode is the default. Light mode uses the same blue-navy hue family at inverted lightness.
+- Dark mode is the only mode. Light mode has been removed (theme toggle hidden). The light palette below is archived for reference.
 - Primary differs between modes: `#397BE9` (dark) vs `#2563EB` (light) — same family, light mode version darkened for WCAG AA compliance.
 - The light logo (`logo-light.png`) currently uses deep purple (`~#4B0FCC`) which does not match the blue primary. Blue is the canonical brand primary — the light logo may need updating.
 - Logo chevron orange (`#E84B2A`) is not in either token set. Add as `--color-brand-accent` if used in UI.

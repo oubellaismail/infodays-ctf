@@ -38,13 +38,12 @@ After code changes to `style.css` or `plugin.js`, hard-refresh the browser (`Cmd
 9. Confirm radial glow spotlights visible (blue from top, warm accent bottom-left)
 10. Confirm SVG noise texture overlay at low opacity
 
-## Verifying Light Mode
+## Verifying Dark-Only Mode
 
-1. Log in → Account Settings → Theme → Light
-2. Confirm page reloads with `<html data-bs-theme="light">`
-3. Confirm `body` background is `#F2F5FC`
-4. Confirm logo swaps to `logo-light.png`
-5. Confirm no dark values visible (no near-black backgrounds in light mode)
+1. Load any page
+2. Confirm the theme toggle (`.theme-switch`) is hidden (not visible in the UI)
+3. Confirm `<html data-bs-theme="dark">` is always set
+4. The platform does not support light mode — only `logo-dark.png` is used
 
 ## Verifying the Challenge Instance Panel
 
