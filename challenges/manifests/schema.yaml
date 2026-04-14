@@ -52,9 +52,10 @@
 #   import_flags creates one team-derived flag row per challenge (HMAC validation)
 #
 # Static challenges:
-#   deploy-challenge.sh → CTFd entry + build zip + upload file + static flag
-#   Flag derived as HMAC(CTF_MASTER_SECRET, "static:{id}") — same for all teams
-#   Custom content: place files in challenges/static-content/{id}/ (included in zip)
-#   No K8s resources created — CTFd's native file download serves the zip
+#   deploy-challenge.sh → CTFd entry + ConfigMap + controller restart + import_flags
+#   Flag: per-team HMAC(CTF_MASTER_SECRET, "{team_id}:{id}") — same formula as service challenges
+#   Download: plugin endpoint /download/{id} generates per-team zip on the fly (requires auth)
+#   Custom content: place files in challenges/static-content/{id}/ (included in zip alongside flag.txt)
+#   No K8s resources created — no bulk_spawn needed
 
 # For more details, see: specs/003-challenge-controller-pod-lifecycle/contracts/challenge-manifest-schema.yaml

@@ -4,4 +4,6 @@ category: reversing
 image: registry.digitalocean.com/infodays-registry/base:reversing
 port: 1337
 type: tcp
-points: 250
+initial: 500
+minimum: 50
+decay: 25

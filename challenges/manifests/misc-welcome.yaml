@@ -1,5 +1,5 @@
 id: misc-welcome
-name: "Welcome"
+name: "Misc Welcome"
 category: misc
 type: static
 description: "Welcome to InfoDays CTF! Download the file and find the flag."
