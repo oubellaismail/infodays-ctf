@@ -68,7 +68,9 @@ def fetch_teams(ctfd_url: str, admin_token: str) -> list[dict]:
         List of {id: str, name: str} dicts
     """
     url = f"{ctfd_url}/api/v1/teams?per_page=100"
-    headers = {"Authorization": f"Token {admin_token}"}
+    # Content-Type required on all CTFd token-auth requests (including GETs);
+    # without it CTFd's token middleware skips auth and returns 302/500.
+    headers = {"Authorization": f"Token {admin_token}", "Content-Type": "application/json"}
 
     try:
         response = httpx.get(url, headers=headers, follow_redirects=True)
@@ -218,7 +220,7 @@ def create_service(core_v1: Any, team_id: str, challenge: dict) -> str:
             labels=labels,
         ),
         spec=V1ServiceSpec(
-            type="NodePort" if challenge.get("type") == "tcp" else "ClusterIP",
+            type="NodePort" if challenge.get("type") in ("tcp", "http") else "ClusterIP",
             selector=labels,
             ports=[V1ServicePort(port=challenge["port"], target_port=challenge["port"])],
         ),
@@ -260,8 +262,6 @@ def create_http_ingress(net_v1: Any, team_id: str, challenge: dict) -> str:
             annotations={
                 "cert-manager.io/cluster-issuer": "letsencrypt-prod",
                 "nginx.ingress.kubernetes.io/ssl-redirect": "true",
-                "nginx.ingress.kubernetes.io/auth-url": "http://ctfd-service.ctfd.svc.cluster.local/team-verify?host=$host",
-                "nginx.ingress.kubernetes.io/auth-signin": "https://ctfd.infodays.net/login",
             },
         ),
         spec=V1IngressSpec(
@@ -345,7 +345,10 @@ def add_tcp_entry(core_v1: Any, team_id: str, challenge: dict) -> tuple[str, int
 
 def spawn_one(clients: tuple[Any, Any, Any], team: dict, challenge: dict) -> dict:
     """
-    Spawn all K8s resources for one team × challenge pair.
+    Spawn K8s resources for one team × challenge pair (secret, deployment, service, HTTP ingress).
+
+    TCP ConfigMap entries are NOT created here — they must be added sequentially after
+    this parallel phase to avoid read-modify-write races on the tcp-services ConfigMap.
 
     Args:
         clients: Tuple of (apps_v1, core_v1, net_v1) API instances
@@ -366,14 +369,10 @@ def spawn_one(clients: tuple[Any, Any, Any], team: dict, challenge: dict) -> dic
         # Create deployment
         create_deployment(apps_v1, team_id, challenge)
 
-        # Create service
+        # Create service (NodePort for TCP, ClusterIP for HTTP)
         create_service(core_v1, team_id, challenge)
 
-        # Create ingress (HTTP) or TCP ConfigMap entry (TCP)
-        if challenge.get("type") == "http":
-            create_http_ingress(net_v1, team_id, challenge)
-        elif challenge.get("type") == "tcp":
-            add_tcp_entry(core_v1, team_id, challenge)
+        # No ingress for HTTP — uses NodePort + tcp-services (same as TCP)
 
         return {
             "team_id": team_id,
@@ -416,19 +415,20 @@ def main(ctfd_url: str, admin_token: str) -> None:
                   and c.get("type") != "static"]
     logger.info(f"Loaded {len(challenges)} service challenges")
 
-    # Submit all (team, challenge) pairs to ThreadPoolExecutor
-    futures = {}
     created = 0
     skipped = 0
     errors = 0
 
+    # Phase 1 (parallel): secret + deployment + service + HTTP ingress
+    # TCP challenges get secret/deployment/service here but NOT their ConfigMap entry.
+    logger.info("Phase 1: spawning pods/services/ingresses in parallel...")
+    futures = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         for team in teams:
             for challenge in challenges:
                 future = executor.submit(spawn_one, clients, team, challenge)
                 futures[future] = (team["id"], challenge["id"])
 
-        # Collect results as they complete
         for future in concurrent.futures.as_completed(futures, timeout=600):
             try:
                 result = future.result()
@@ -445,6 +445,34 @@ def main(ctfd_url: str, admin_token: str) -> None:
             except Exception as e:
                 errors += 1
                 logger.error(f"Exception collecting result: {e}")
+
+    # Phase 2 (sequential): TCP + HTTP ConfigMap entries — must NOT run in parallel.
+    # Parallel read-modify-write on tcp-services ConfigMap causes port collisions
+    # (validated: 10 parallel workers produced 43/100 entries instead of 100).
+    tcp_challenges = [c for c in challenges if c.get("type") in ("tcp", "http")]
+    if tcp_challenges:
+        logger.info(
+            f"Phase 2: registering TCP/HTTP ports sequentially "
+            f"({len(teams)} teams × {len(tcp_challenges)} service challenges)..."
+        )
+        tcp_created = 0
+        tcp_skipped = 0
+        for team in teams:
+            for challenge in tcp_challenges:
+                try:
+                    status, port = add_tcp_entry(core_v1, team["id"], challenge)
+                    if status == "created":
+                        tcp_created += 1
+                    else:
+                        tcp_skipped += 1
+                except Exception as e:
+                    errors += 1
+                    logger.error(
+                        f"Error adding TCP entry {team['id']}/{challenge['id']}: {e}"
+                    )
+        logger.info(
+            f"TCP ports: {tcp_created} registered, {tcp_skipped} already present"
+        )
 
     logger.info(f"Done: {created} created, {skipped} skipped, {errors} errors")
 

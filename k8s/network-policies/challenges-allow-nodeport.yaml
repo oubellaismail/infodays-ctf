@@ -9,6 +9,8 @@ spec:
   - Ingress
   ingress:
   - ports:
+    - port: 8080
+      protocol: TCP
     - port: 1337
       protocol: TCP
     - port: 4444

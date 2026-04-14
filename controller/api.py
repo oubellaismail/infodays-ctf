@@ -167,9 +167,9 @@ def build_challenge_url(core_v1: Any, team_id: str, challenge_id: str) -> Option
     """
     Build the challenge URL for a team.
 
-    For HTTP challenges: https://team-{team_id}-{challenge_id}.challenges.infodays.net
+    For HTTP challenges: http://challenges.infodays.net:{port}
     For TCP challenges: nc challenges.infodays.net {port}
-    Returns None only if TCP port is not yet assigned (race condition window during bulk_spawn).
+    Both use NodePort. Returns None if port not yet assigned.
     """
     manifests = get_challenge_manifests()
     challenge = manifests.get(challenge_id)
@@ -178,10 +178,7 @@ def build_challenge_url(core_v1: Any, team_id: str, challenge_id: str) -> Option
         logger.warning(f"Manifest not found for challenge_id={challenge_id}")
         return None
 
-    if challenge.get("type") == "http":
-        return f"https://team-{team_id}-{challenge_id}.challenges.infodays.net"
-
-    # TCP: get NodePort from the challenge service + any node's external IP
+    # HTTP and TCP both use NodePort — look up the assigned port from the service
     try:
         svc_name = service_name(team_id, challenge_id)
         svc = core_v1.read_namespaced_service(svc_name, "challenges")
@@ -189,6 +186,9 @@ def build_challenge_url(core_v1: Any, team_id: str, challenge_id: str) -> Option
         if not node_port:
             logger.warning(f"NodePort not assigned yet for {svc_name}")
             return None
+
+        if challenge.get("type") == "http":
+            return f"http://challenges.infodays.net:{node_port}"
 
         return f"nc challenges.infodays.net {node_port}"
     except ApiException as e:
