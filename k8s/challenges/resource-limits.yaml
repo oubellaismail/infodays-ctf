@@ -1,0 +1,38 @@
+---
+# ResourceQuota: hard ceiling on total resources consumed by all challenge pods.
+# With 50 teams × 35 service challenges, max active at once = 50 × 4 cap = 200 pods.
+# Limits sized for 200 concurrent active challenge pods with room to spare.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: challenges-quota
+  namespace: challenges
+spec:
+  hard:
+    pods: "250"
+    requests.cpu: "25"        # 200 pods × 0.05 CPU request = 10 cores; 2.5× headroom
+    requests.memory: "12Gi"   # 200 pods × 32Mi request = 6.4Gi; ~2× headroom
+    limits.cpu: "100"         # 200 pods × 0.5 CPU limit
+    limits.memory: "50Gi"     # 200 pods × 128Mi default limit
+---
+# LimitRange: enforce per-pod defaults so any pod without explicit limits still gets bounded.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: challenges-limits
+  namespace: challenges
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "0.5"
+      memory: "128Mi"
+    defaultRequest:
+      cpu: "0.05"
+      memory: "32Mi"
+    max:
+      cpu: "1"
+      memory: "512Mi"
+    min:
+      cpu: "0.01"
+      memory: "16Mi"
