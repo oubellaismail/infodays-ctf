@@ -1,6 +1,6 @@
 # infodays-ctf Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-04-04
+Auto-generated from all feature plans. Last updated: 2026-04-09
 
 ## Active Technologies
 - HCL (Terraform ≥1.5) for any Terraform additions; YAML (Kubernetes manifests); Bash (setup script); Python 3.11+ (import script) + `digitalocean` Terraform provider v2.x (already present); Kubernetes manifest files applied via `kubectl`; CTFd image `ctfd/ctfd:latest`; MySQL 8 image `mysql:8`; Redis 7 image `redis:7-alpine` (002-ctfd-platform-stack)
@@ -177,6 +177,7 @@ terraform -chdir=infra/terraform destroy
 HCL (Terraform ≥1.5); YAML (Kubernetes manifests via TF providers): Follow standard conventions
 
 ## Recent Changes
+- 009-deploy-hardening (2026-04-09): HTTP challenges switched from HTTPS ingress + nginx auth_request to NodePort + tcp-services (same as TCP). `allow-nodeport-to-challenges` NetworkPolicy updated to include port 8080. DNS apex A records now cover all worker nodes (terraform apply required after node pool changes). cert-manager configured with external DNS resolvers for ACME DNS-01. Bootstrap hardening: INGRESS_IP auto-detect, CONTROLLER_KEY persistence across re-runs, ghost repo cleanup fixed (tag_count==0 only), challenge scores all set to 500, CTF name navbar flash removed. Challenge manifest names aligned to CTFd slugification: "Misc Welcome" / "Pwn Fmt".
 - 008-ctfd-branding-ui-polish: Added CSS3, Vanilla JavaScript (ES5/ES6), Python 3.11+ (Flask/CTFd plugin) + Bootstrap 5 (bundled with CTFd), Google Fonts CDN (Inter + JetBrains Mono), CTFd Blueprint static serving
 - 007-100-team-scaling: Added HCL (Terraform ≥1.5), YAML (Kubernetes manifests), Bash 5 (scripts), JavaScript ESM (k6 load tests) + Terraform `digitalocean` provider v2.x, `helm` provider v2.x, ProxySQL 2.x, kubectl, k6
 - 006-load-testing: 200-VU soak tests (50 teams × 4 members, 45 min). CTFd scaled 2→5 replicas, workers 8→4, memory 512Mi→2Gi. MySQL memory 1Gi→2Gi (OOM fix), max-connections=500, innodb-buffer-pool-size=512MB. import_flags.py Content-Type fix. Challenge manifest names aligned to CTFd. tcp-services sequential port generation fix. Phase 7 planned for 100-team (400 VU) scaling with ProxySQL.
@@ -204,7 +205,9 @@ HCL (Terraform ≥1.5); YAML (Kubernetes manifests via TF providers): Follow sta
 ### Network Policies (challenges namespace)
 - `default-deny-all`: Blocks all ingress/egress by default
 - `allow-ingress-to-challenges`: Allows ingress-nginx → challenge pods on ports 8080, 1337, 4444
+- `allow-nodeport-to-challenges`: Allows NodePort traffic (no source restriction) on ports **8080, 1337, 4444** — required for direct NodePort access which bypasses ingress-nginx
 - `allow-challenges-egress-dns`: Allows challenge pods → kube-system DNS (port 53)
+- **Critical**: NodePort traffic originates from the node itself (kube-proxy NAT), not from the ingress-nginx namespace. Port 8080 (HTTP challenges) MUST appear in `allow-nodeport-to-challenges`; without it the default-deny blocks all NodePort connections to HTTP challenge pods.
 
 ### Network Policies (ctfd namespace)
 - `allow-ctfd-egress-controller`: CTFd pods → controller-api on port 5000
@@ -225,10 +228,11 @@ HCL (Terraform ≥1.5); YAML (Kubernetes manifests via TF providers): Follow sta
 ### Static File Challenges (`type: static`)
 - For challenges with no running service — players download a file (e.g., forensics, crypto)
 - Manifest: set `type: static` (no `image` or `port` needed)
-- Flag: derived as `HMAC(CTF_MASTER_SECRET, "static:{challenge_id}")` — same for all teams
-- Deploy script: builds zip with flag baked in, uploads to CTFd as file attachment, creates static flag
-- `bulk_spawn.py` and `import_flags.py` skip `type: static` challenges (no K8s pods)
-- Plugin UI: hides Start/Stop buttons for unmanaged challenges — CTFd's native download button handles it
+- Flag: per-team HMAC-derived — same formula as service challenges: `HMAC(CTF_MASTER_SECRET, "{team_id}:{challenge_id}")[:32]`
+- Download: plugin endpoint `/download/{challenge_id}` generates a per-team zip on the fly (requires auth)
+- Flag type: custom `team` type (same as service challenges) — cheater detection works identically
+- `bulk_spawn.py` skips `type: static` challenges (no K8s pods), `import_flags.py` includes them (team flag rows)
+- Plugin UI: shows a "Download Challenge" button for static challenges (replaces Start/Stop buttons)
 - Custom content: place files in `challenges/static-content/{id}/` and they'll be included in the zip alongside `flag.txt`
 - Example manifest:
   ```yaml
@@ -248,7 +252,8 @@ bash scripts/deploy-challenge.sh challenges/manifests/<id>.yaml
 #   CTFd creation → ConfigMap update → controller restart → bulk_spawn → flag import
 
 # Static challenges (type: static):
-#   CTFd creation → build zip → upload file → create static flag (no K8s resources)
+#   CTFd creation → ConfigMap update → controller restart → flag import (no bulk_spawn, no zip upload)
+#   Zips are generated on-the-fly by the plugin's /download/{id} endpoint (per-team HMAC flags)
 ```
 
 ### CTFd Token Auth Quirk
@@ -263,7 +268,7 @@ bash scripts/deploy-challenge.sh challenges/manifests/<id>.yaml
 - ProxySQL: 2 replicas, read/write splitting (hostgroup 0=writer, 1=reader), max_connections=200 per backend
 - Controller API: **8 replicas, 8 uvicorn workers each**, 1Gi memory limit, 250m CPU request (IO-bound), 5s status cache TTL
 - Redis: **StatefulSet** with 1Gi PVC on do-block-storage, AOF persistence (appendonly yes, appendfsync everysec)
-- Node pool: autoscaling 3–8 × s-4vcpu-8gb
+- Node pool: autoscaling 3–5 × s-4vcpu-8gb (`node_max=5` in terraform.tfvars — DO account droplet limit is 10, leaving headroom for LB + other droplets)
 
 ### MySQL Replication
 - GTID-based replication: primary (mysql-0) → replica (mysql-replica-0)
@@ -282,14 +287,38 @@ bash scripts/deploy-challenge.sh challenges/manifests/<id>.yaml
 - Controller needs `CiliumNetworkPolicy` with `toEntities: [kube-apiserver]` for K8s API access
 - ClusterRole + ClusterRoleBinding needed for node listing (NodePort discovery)
 
-### HTTP Challenge Isolation (nginx auth_request)
-- All HTTP challenge Ingresses carry two nginx annotations:
-  - `auth-url: http://ctfd-service.ctfd.svc.cluster.local/team-verify?host=$host` — server-side auth sub-request
-  - `auth-signin: https://ctfd.infodays.net/login` — redirect destination on 401
-- CTFd plugin exposes `/team-verify`: parses `team-{id}-{challenge}` from `?host=`, returns 200/401/403
-- **SESSION_COOKIE_DOMAIN must be `.infodays.net`** (not `ctfd.infodays.net`) so the session cookie is sent to `*.challenges.infodays.net`. Set in `load(app)` as `app.config["SESSION_COOKIE_DOMAIN"] = ".infodays.net"` — Flask ignores the env var, it must be set in app config.
-- After changing SESSION_COOKIE_DOMAIN, run `kubectl exec -n ctfd redis-0 -- redis-cli FLUSHDB` to clear old-domain cookies that cause login loops.
-- **TCP challenges (nc)** are NOT isolated by URL — NodePort bypasses nginx. Isolation is cryptographic only (HMAC flags unique per team).
+### HTTP Challenge Networking (NodePort, no HTTPS ingress)
+- HTTP challenges use the **same NodePort + tcp-services approach as TCP challenges** — no Ingress, no TLS, no nginx auth_request
+- URL format: `http://challenges.infodays.net:{node_port}` (plain HTTP on a NodePort)
+- `challenges.infodays.net` apex A records → all worker node IPs (see DNS section below)
+- `bulk_spawn.py` creates NodePort services for both HTTP and TCP challenges; HTTP challenges are included in Phase 2 tcp-services ConfigMap registration
+- `api.py` `build_challenge_url()` reads the K8s NodePort from the service and returns `http://challenges.infodays.net:{node_port}`
+- **No URL-based isolation for HTTP challenges** — isolation is cryptographic only (HMAC flags unique per team), same as TCP
+- Why: nginx `auth_request` required a session cookie, making challenges inaccessible with standard tools like curl. NodePort direct access removes this constraint.
+
+### DNS for challenges.infodays.net
+- Apex A records (`@`) → all worker node **public IPs** (one record per node, TTL 60s)
+- Wildcard A record (`*`) → nginx LB IP (used only for legacy ingress paths, not active challenges)
+- Terraform manages apex records via `digitalocean_record.challenges_apex_a` (count over `data.digitalocean_droplets.workers`)
+- **After any node pool change** (scale up/down, node replacement): run `terraform apply -target=digitalocean_record.challenges_apex_a` to refresh the A records
+- K8s NodePort traffic works from any worker node (kube-proxy forwards to the pod regardless of which node it runs on), so missing a node in DNS only reduces round-robin coverage, it does not break connectivity
+
+### cert-manager DNS-01 (DOKS)
+- CoreDNS inside DOKS cannot resolve external DNS TXT records needed for ACME DNS-01 validation
+- Fix: cert-manager Helm chart must include `--dns01-recursive-nameservers-only` and `--dns01-recursive-nameservers=8.8.8.8:53,1.1.1.1:53` in `extraArgs`
+- Configured in `infra/terraform/cert-manager.tf` via the `values` block on the `helm_release`
+
+### Bootstrap Script Gotchas
+- `bootstrap.sh` auto-detects `INGRESS_IP` from the nginx LB service and exports it; `deploy-all.sh` passes it to `setup-ctfd.sh` so CTFd can be configured before DNS propagates
+- `CONTROLLER_KEY` is generated once and saved to `.ctfd.env`; on re-runs `bootstrap.sh` loads it from that file to stay consistent (avoids plugin 401 after re-deploy)
+- The `controller-key` K8s secret is synced outside the `SKIP_K8S_STACK` block so it always matches the value stored in CTFd
+- `setup-ctfd.sh` `wait_for_ctfd` uses `curl -sk` (skip TLS verify) to handle the window between pod start and cert issuance
+- Ghost repo cleanup in `bootstrap.sh` only deletes DOCR repositories with `tag_count == 0` — never delete repos that have images
+
+### Challenge Manifest Naming
+- CTFd display name must match the manifest `id` when slugified: `name.toLowerCase().replace(/\s+/g,"-").replace(/[^a-z0-9-]/g,"")` must equal `id`
+- Example: manifest `id: misc-welcome` → CTFd name must be `"Misc Welcome"` (slugifies to `misc-welcome`)
+- Mismatches cause the plugin to derive the wrong `challenge_id`, breaking flag validation and controller calls
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

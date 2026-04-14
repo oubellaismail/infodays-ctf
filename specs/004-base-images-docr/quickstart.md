@@ -59,7 +59,9 @@ docker run --rm -e FLAG="infodays{test}" -p 4444:4444 base-misc:local
 
 ---
 
-## Step 3: Build & Extract a Static Archive
+## Step 3: Build & Extract a Static Archive (Manual Testing Only)
+
+In production, static challenge zips are generated **on the fly** by the plugin's `/download/{id}` endpoint with per-team HMAC flags. The Docker builder below is for local testing only:
 
 ```sh
 docker buildx build \

@@ -60,6 +60,10 @@ __pycache__/
 
 # CTFd generated credentials
 .ctfd.env
+.ctfd.env.bak
+
+# Challenge build artifacts (contain generated flags)
+dist/
 
 # Phase 6: Event Readiness & Runbook
 backups/*.sql

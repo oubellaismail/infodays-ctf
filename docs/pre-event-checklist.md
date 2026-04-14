@@ -63,10 +63,15 @@ Do NOT open the event until every item in the Ops Readiness section is checked.
   `kubectl get deployments -n challenges --no-headers | wc -l`
   Expected: count matches (teams × challenges) total
 
-- [ ] import_flags.py ran — one `team` flag row per service challenge in CTFd
+- [ ] import_flags.py ran — one `team` flag row per challenge (service + static) in CTFd
   `curl -s -H "Authorization: Token $CTFD_ADMIN_TOKEN" -H "Content-Type: application/json" https://ctfd.infodays.net/api/v1/flags | jq '[.data[] | select(.type=="team")] | length'`
-  Expected: count equals number of service challenges (e.g., 3 for web-sqli, pwn-bof, misc-riddle)
-  Note: type is `team` (not `static`) — one row covers all 50 teams via HMAC derivation
+  Expected: count equals total number of challenges (service + static, e.g., 4 for web-sqli, pwn-bof, misc-riddle, misc-welcome)
+  Note: type is `team` (not `static`) — one row covers all 50 teams via HMAC derivation. Static challenges also use `team` type for per-team flag derivation.
+
+- [ ] Static challenge download endpoint works
+  Log in as any team member, visit `https://ctfd.infodays.net/download/misc-welcome`
+  Expected: browser downloads `misc-welcome.zip` containing `flag.txt` with a team-specific flag
+  Verify: download as two different teams → `flag.txt` contents differ (per-team HMAC)
 
 - [ ] Sample end-to-end test: activate one Web, one Pwn, one Misc instance for team-999
   `curl -X POST http://controller-api.ctfd.svc.cluster.local:80/activate -H "X-Controller-Key: $CONTROLLER_KEY" -d '{"team_id":999,"challenge_id":"test-web-1"}'`

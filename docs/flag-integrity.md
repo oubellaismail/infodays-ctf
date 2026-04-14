@@ -35,7 +35,7 @@ Cross-team submission is cryptographically impossible without knowing `CTF_MASTE
 
 ### Database schema
 
-One row per service challenge in the `flags` table:
+One row per challenge (service **and** static) in the `flags` table:
 
 | Field        | Value              | Notes                                        |
 |--------------|--------------------|----------------------------------------------|
@@ -44,16 +44,17 @@ One row per service challenge in the `flags` table:
 | `data`       | `web-sqli`         | Challenge manifest ID — used for derivation  |
 
 ```sql
--- Example: 3 service challenges, 3 rows total (not 50×3=150)
+-- Example: 3 service + 1 static challenge = 4 rows total (not 50×4=200)
 SELECT id, challenge_id, type, content, data FROM flags;
 -- 1 | 1 | team | team-derived | web-sqli
 -- 2 | 2 | team | team-derived | pwn-bof
 -- 3 | 3 | team | team-derived | misc-riddle
+-- 4 | 4 | team | team-derived | misc-welcome    ← static challenge, same flag type
 ```
 
 ### Importing flags
 
-`controller/import_flags.py` creates one `team` flag row per service challenge:
+`controller/import_flags.py` creates one `team` flag row per challenge (service + static):
 
 ```bash
 CTF_MASTER_SECRET=<secret> python3 controller/import_flags.py \
@@ -61,6 +62,11 @@ CTF_MASTER_SECRET=<secret> python3 controller/import_flags.py \
 ```
 
 The script is idempotent — skips challenges that already have a `team-derived` flag row.
+
+Static challenges use the same `team` flag type so that:
+- Each team has a unique flag (derived from their team ID)
+- Cross-team flag submission is detected and logged (same cheater detection as service challenges)
+- The plugin's `/download/{id}` endpoint bakes each team's unique flag into their zip
 
 ---
 
@@ -82,16 +88,19 @@ When a wrong flag is submitted, the plugin checks whether it belongs to any othe
 CREATE TABLE IF NOT EXISTS cheaters (
     id                    INT AUTO_INCREMENT PRIMARY KEY,
     submitting_team_id    INT          NOT NULL,
+    submitting_user_id    INT              NULL,
     submitted_flag        TEXT         NOT NULL,
     owner_team_id         INT          NOT NULL,
     challenge_manifest_id VARCHAR(255) NOT NULL,
     submitted_at          DATETIME     NOT NULL,
     INDEX idx_submitting (submitting_team_id),
+    INDEX idx_user       (submitting_user_id),
     INDEX idx_owner      (owner_team_id)
 );
 ```
 
 The table is created automatically at CTFd plugin load time (idempotent `CREATE TABLE IF NOT EXISTS`).
+`submitting_user_id` identifies the individual player who submitted the flag (nullable for backwards compatibility).
 
 ### Viewing the cheaters log
 
@@ -108,6 +117,8 @@ Response fields:
 |-----------------------|---------------------------------------------------|
 | `submitting_team`     | Name of the team that submitted the flag          |
 | `submitting_team_id`  | Numeric ID of the submitting team                 |
+| `submitting_user`     | Name of the individual player who submitted       |
+| `submitting_user_id`  | Numeric ID of the submitting player               |
 | `submitted_flag`      | The exact flag string they submitted              |
 | `owner_team`          | Name of the team whose flag was submitted         |
 | `owner_team_id`       | Numeric ID of the flag's rightful owner           |
@@ -125,7 +136,7 @@ Results are ordered by `submitted_at DESC` (most recent first).
 curl -s -H "Authorization: Token $CTFD_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   https://ctfd.infodays.net/api/v1/flags | jq '[.data[] | select(.type=="team")] | length'
-# Expected: 3 (one per service challenge)
+# Expected: total number of challenges (service + static) — e.g. 4 for 3 service + 1 static
 
 # 2. Verify correct flag accepted for your team
 # Get your team's flag for web-sqli:

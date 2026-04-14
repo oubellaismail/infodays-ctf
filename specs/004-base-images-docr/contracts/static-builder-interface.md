@@ -1,4 +1,4 @@
-# Contract: Static Challenge Archive Builder Interface
+# Contract: Static Challenge Archive & Per-Team Download
 
 **Feature**: 004-base-images-docr | **Date**: 2026-03-25 | **Updated**: 2026-04-07
 
@@ -6,11 +6,9 @@
 
 ## Overview
 
-Static challenges are file-download challenges with no running service. Players download a zip file from the CTFd challenge page and find the flag inside.
+Static challenges are file-download challenges with no running service. Players download a zip file from the challenge modal and find the flag inside.
 
-Two deployment methods:
-1. **Automated** (recommended): `deploy-challenge.sh` builds the zip, uploads it, and creates the flag
-2. **Manual**: Build with Docker, upload to CTFd Files section manually
+Each team receives a **unique zip** with a team-derived HMAC flag — the same formula used for service challenges. Zips are generated **on the fly** by the CTFd plugin's `/download/{challenge_id}` endpoint, not pre-built or stored.
 
 ## Automated Deployment (via deploy-challenge.sh)
 
@@ -42,12 +40,11 @@ bash scripts/deploy-challenge.sh challenges/manifests/misc-welcome.yaml
 ### What the Deploy Script Does
 
 1. Creates the challenge in CTFd (dynamic scoring, `type: dynamic`)
-2. Derives the flag: `HMAC-SHA256(CTF_MASTER_SECRET, "static:{challenge_id}")[:32]` → `infodays{...}`
-3. Builds `challenge.zip` containing `flag.txt` (+ any custom content)
-4. Uploads zip to CTFd via `POST /api/v1/files` as a challenge attachment
-5. Creates a static flag in CTFd via `POST /api/v1/flags`
+2. Updates the `challenge-manifests` ConfigMap (so `import_flags.py` picks up the manifest)
+3. Restarts the controller API (to reload manifest cache)
+4. Runs `import_flags.py` to create a `team` flag row in CTFd
 
-**Skipped steps** (vs service challenges): no ConfigMap update, no controller restart, no bulk_spawn, no import_flags.
+**Skipped steps** (vs service challenges): no bulk_spawn (no K8s pods). No zip generation or file upload — the plugin generates zips on the fly.
 
 ### Custom Challenge Content
 
@@ -60,17 +57,18 @@ challenges/static-content/{challenge_id}/
 └── README.txt
 ```
 
-The deploy script copies all files from this directory into the zip, then adds `flag.txt` with the derived flag.
+The plugin's download endpoint includes all files from this directory in the zip, then adds/overwrites `flag.txt` with the team-derived flag.
 
 ### Flag Derivation
 
 | Field | Value |
 |-------|-------|
-| Formula | `HMAC-SHA256(CTF_MASTER_SECRET, "static:{challenge_id}")` |
+| Formula | `HMAC-SHA256(CTF_MASTER_SECRET, "{team_id}:{challenge_id}")` |
 | Truncation | First 32 hex characters |
 | Format | `infodays{<32 hex chars>}` |
-| Scope | Same flag for all teams (not team-derived) |
-| CTFd flag type | `static` (built-in CTFd type, not custom `team` type) |
+| Scope | **Per-team** — each team gets a unique flag (same formula as service challenges) |
+| CTFd flag type | `team` (custom type — same as service challenges, not built-in `static`) |
+| Cheater detection | Yes — cross-team flag submission is detected and logged |
 
 ### Dynamic Scoring
 
@@ -82,15 +80,26 @@ The deploy script copies all files from this directory into the zip, then adds `
 
 All challenges (static and service) use CTFd dynamic scoring. Override per-manifest with `initial`, `minimum`, `decay` fields.
 
+### Plugin Download Endpoint
+
+The CTFd plugin exposes `GET /download/<challenge_manifest_id>`:
+
+1. Authenticates the user via `get_current_user()` / `get_current_team()`
+2. Derives the flag: `_derive(team.id, challenge_manifest_id, CTF_MASTER_SECRET)`
+3. Builds a zip in memory containing `flag.txt` (+ custom content if present)
+4. Returns the zip as `{challenge_manifest_id}.zip` with `Content-Disposition: attachment`
+
+No zips are stored on disk — each download is generated fresh from the team's HMAC.
+
 ### Plugin UI Behaviour
 
-The CTFd plugin **does not show Start/Stop buttons** for static challenges. When the controller status API doesn't include a challenge (no K8s Deployment exists), the plugin hides its UI entirely. CTFd's native file download link is displayed instead.
+The CTFd plugin **shows a "Download Challenge" button** for static challenges. When the controller status API doesn't include a challenge (no K8s Deployment exists), the plugin renders a download button pointing to `/download/{challenge_id}` instead of the Start/Stop controls.
 
 ---
 
 ## Manual Build (Docker)
 
-The static builder Dockerfile can also be used standalone:
+The static builder Dockerfile can also be used standalone for testing:
 
 ### Build Command
 
@@ -111,7 +120,7 @@ docker buildx build \
 
 | Path | Description |
 |------|-------------|
-| `./dist/challenge.zip` | The challenge archive, ready for upload to CTFd Files section |
+| `./dist/challenge.zip` | The challenge archive (for manual testing only — production uses on-the-fly generation) |
 
 ### Archive Structure
 

@@ -33,7 +33,18 @@ Announce to teams that the event is open.
 
 ### Add a new challenge mid-event
 
+**Recommended**: Use the one-command deploy script:
+
 ```bash
+bash scripts/deploy-challenge.sh challenges/manifests/<challenge-id>.yaml
+```
+
+This handles everything automatically — CTFd entry, ConfigMap, controller restart, bulk_spawn (service) or flag import (static).
+
+**Manual steps** (if the script can't be used):
+
+```bash
+# Service challenges (type: http/tcp):
 # 1. Build and push the new challenge image
 bash scripts/push-challenge.sh <challenge-id> challenges/base-images/<type> <type>
 
@@ -47,6 +58,15 @@ kubectl rollout restart deployment/controller-api -n ctfd
 # 4. Re-run bulk_spawn to pre-spawn pods for all teams (incl. the new challenge)
 kubectl exec -n ctfd deployment/controller-api -- \
   python3 bulk_spawn.py --ctfd-url http://localhost:5000 --token "$CTFD_ADMIN_TOKEN"
+
+# Static challenges (type: static):
+# 1. Add the manifest to challenges/manifests/<challenge-id>.yaml
+# 2. Update ConfigMap + restart controller (same as above)
+# 3. Run import_flags to create the team flag row:
+kubectl exec -n ctfd deployment/controller-api -- \
+  env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
+  python3 import_flags.py --ctfd-url https://ctfd.infodays.net
+# No bulk_spawn needed — plugin serves per-team zips on the fly via /download/{id}
 ```
 
 ### Restart a broken team pod (manual)
@@ -67,8 +87,8 @@ curl -s -H "Authorization: Token $CTFD_ADMIN_TOKEN" \
   https://ctfd.infodays.net/admin/cheaters | jq .
 ```
 
-Fields returned: `submitting_team`, `submitting_team_id`, `submitted_flag`, `owner_team`,
-`owner_team_id`, `challenge`, `submitted_at`.
+Fields returned: `submitting_team`, `submitting_team_id`, `submitting_user`, `submitting_user_id`,
+`submitted_flag`, `owner_team`, `owner_team_id`, `challenge`, `submitted_at`.
 
 An entry here means the team submitted a flag that was cryptographically matched to another team.
 The submission was **rejected** (returned False). Log this for integrity review after the event.
