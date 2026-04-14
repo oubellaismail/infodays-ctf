@@ -174,7 +174,7 @@ doctl compute firewall add-rules <worker-firewall-id> \
 
 **Root cause:** `allow-ingress-to-challenges` NetworkPolicy only permitted traffic from the `ingress-nginx` namespace. NodePort traffic enters pods from kube-proxy/Cilium at the host level — not from a namespace — so `default-deny-all` dropped it.
 
-**Fix:** Added a separate NetworkPolicy allowing ingress on TCP challenge ports from any source:
+**Fix:** Added a separate NetworkPolicy allowing ingress on all challenge ports from any source:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -188,13 +188,15 @@ spec:
   - Ingress
   ingress:
   - ports:
+    - port: 8080
+      protocol: TCP
     - port: 1337
       protocol: TCP
     - port: 4444
       protocol: TCP
 ```
 
-Port 8080 (HTTP challenges) is intentionally excluded — those go through NGINX ingress only.
+Port 8080 (HTTP challenges) is included here because HTTP challenges also use NodePort directly — see Fix 13 below.
 
 ---
 
@@ -304,40 +306,23 @@ kubectl get pvc redis-data-redis-0 -n ctfd
 
 ---
 
-## Fix 13 — HTTP challenge isolation: team-B could access team-A's challenge URL
+## Fix 13 — HTTP challenges switched from Ingress + auth_request to NodePort
 
-**Symptom:** Visiting `https://team-1-web-sqli.challenges.infodays.net/` while logged in as team-2 showed team-1's running challenge instance. No authentication enforced at the URL layer.
+**Symptom:** `http://challenges.infodays.net:<nodeport>` timed out for HTTP challenges. Investigation revealed `auth_request` made HTTP challenges inaccessible with standard tools (curl, browsers without active CTFd session).
 
-**Root cause:** HTTP challenge Ingresses had no auth. Any authenticated CTFd user could access any team's challenge URL directly.
+**History:** An earlier iteration used `https://team-{id}-{challenge}.challenges.infodays.net/` with nginx `auth_request` + `/team-verify` CTFd endpoint to enforce per-team URL isolation. This was removed for two reasons:
+1. Players couldn't use `curl` or tools without a browser session cookie
+2. NodePort for TCP already worked fine — HTTP doesn't need different treatment
 
-**Fix:** Two-part solution:
+**Fix:** HTTP challenges now use the same NodePort approach as TCP challenges:
+- `bulk_spawn.py` creates `NodePort` services for HTTP challenges (not `ClusterIP` + Ingress)
+- `api.py` returns `http://challenges.infodays.net:{node_port}` for HTTP challenges
+- NetworkPolicy `allow-nodeport-to-challenges` explicitly includes port 8080
+- No Ingress created, no session cookie required, accessible from any tool
 
-**Part A — nginx `auth_request` on all HTTP challenge Ingresses**
+**Isolation model:** Same as TCP — cryptographic only. Per-team HMAC flags (`infodays{HMAC(secret, team_id:challenge_id)[:32]}`) are unique per team. Submitting another team's flag is rejected and logged to `cheaters`. No URL-based access restriction.
 
-Added annotations to all HTTP Ingresses (set in `bulk_spawn.py` for new challenges; re-patched all existing 350 Ingresses manually):
-```yaml
-nginx.ingress.kubernetes.io/auth-url: "http://ctfd-service.ctfd.svc.cluster.local/team-verify?host=$host"
-nginx.ingress.kubernetes.io/auth-signin: "https://ctfd.infodays.net/login"
-```
-nginx sends a sub-request to `/team-verify` before proxying. 200 → allow, 401 → redirect to login, 403 → deny.
-
-**Part B — `/team-verify` endpoint in CTFd plugin**
-
-Added to `ctfd-plugin/__init__.py`:
-- Parses `team-{id}-{challenge}` from the `?host=` query parameter (nginx passes `$host`)
-- Returns 200 if logged-in team's ID matches the URL's team ID
-- Admins always get 200
-- Not-logged-in users get 401 (→ nginx redirects to login page)
-
-**Part C — `SESSION_COOKIE_DOMAIN = ".infodays.net"` in Flask app config**
-
-The CTFd session cookie was scoped to `ctfd.infodays.net`. Browsers don't send it to `*.challenges.infodays.net`, so `/team-verify` always got 401 (no session). Fixed by setting `app.config["SESSION_COOKIE_DOMAIN"] = ".infodays.net"` inside the plugin `load(app)` function. Flask ignores the `SESSION_COOKIE_DOMAIN` env var — it must be set in the app config.
-
-**Post-fix gotcha — login loop:** After changing the cookie domain, browsers have both an old `ctfd.infodays.net`-scoped cookie and a new `.infodays.net`-scoped one. Flask reads the domain-specific one (higher priority), finds no valid session, redirects to login — infinite loop.
-
-**Resolution:** `kubectl exec -n ctfd redis-0 -- redis-cli FLUSHDB` to invalidate all old sessions. Teams clear browser cookies and re-login once.
-
-**TCP challenges:** NodePort traffic bypasses nginx ingress entirely — `auth_request` does NOT apply to `nc` challenges. Isolation is enforced cryptographically (HMAC flags unique per team). Cross-team flag submission is rejected and logged to the `cheaters` table.
+**Why this is sufficient:** The challenge content is not secret (same for all teams). Only the flag is secret, and it's derived per-team. A player from team-B viewing team-A's challenge UI doesn't help them — they still need team-A's HMAC flag to score.
 
 ---
 
@@ -369,10 +354,20 @@ bash scripts/setup-mysql-replication.sh
 kubectl apply -f k8s/ctfd/proxysql-configmap.yaml
 kubectl rollout restart deployment/proxysql -n ctfd
 
-# 7. Enable Redis caching in CTFd
+# 7. Enable Redis caching in CTFd + apply security hardening
 kubectl apply -f k8s/ctfd/deployment.yaml
 kubectl rollout restart deployment/ctfd -n ctfd
 
-# 8. Enable node autoscaler (via Terraform)
+# 8. Apply security resources (rate limiting, PDBs, resource quotas)
+kubectl apply -f k8s/ctfd/ingress.yaml
+kubectl apply -f k8s/ctfd/ingress-login-ratelimit.yaml
+kubectl apply -f k8s/ctfd/nginx-global-config.yaml
+kubectl apply -f k8s/ctfd/pdb.yaml
+kubectl apply -f k8s/challenges/resource-limits.yaml
+
+# 9. Update NodePort policy (must include port 8080 for HTTP challenges)
+kubectl apply -f k8s/network-policies/challenges-allow-nodeport.yaml
+
+# 10. Enable node autoscaler (via Terraform)
 terraform -chdir=infra/terraform apply -auto-approve
 ```

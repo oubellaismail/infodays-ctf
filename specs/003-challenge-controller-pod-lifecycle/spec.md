@@ -49,11 +49,11 @@ the script and confirm no duplicate resources are created.
    **Then** a unique port (≥ 30000) is assigned and the NGINX TCP ConfigMap
    entry is created.
 
-5. **Given** a challenge with category `crypto`, `forensics`, `reversing`, or
-   `osint`,
+5. **Given** a challenge with `type: static`,
    **When** `bulk_spawn.py` encounters it,
-   **Then** no Deployment, Secret, or Service is created for that challenge
-   — it is silently skipped.
+   **Then** no Deployment, Secret, or Service is created — it is silently skipped.
+   Static challenges (forensics, crypto, etc.) have no running service; flags are
+   derived per-team and players download a zip from the plugin's `/download/{id}` endpoint.
 
 ---
 
@@ -220,10 +220,11 @@ few seconds. Confirm the Stop button is present when Running.
    disabled, a "Retry" link is rendered, and the error is logged to the
    browser console. No stale status is silently preserved.
 
-6. **Given** the challenge is of category `crypto`, `forensics`, `reversing`,
-   or `osint`,
+6. **Given** the challenge has `type: static` (no running service),
    **When** the challenge page is loaded,
-   **Then** no plugin UI elements are shown — the page is unmodified.
+   **Then** the plugin shows a "Download Challenge" button instead of Start/Stop controls.
+   The button calls the plugin's `/download/{challenge_id}` endpoint which generates
+   a per-team zip on the fly containing the challenge files and the team's HMAC flag.
 
 ---
 
@@ -361,8 +362,8 @@ matching `derive_flag(team_id, challenge_id)`.
   expiry.
 - **Controller API**: The FastAPI service running in the `ctfd` namespace that
   the CTFd plugin calls; exposes `/activate`, `/deactivate`,
-  `/status/{team_id}`, `/health`. Runs at **2 replicas** (stateless,
-  active-active; no coordination needed).
+  `/status/{team_id}`, `/health`. Runs at **8 replicas** (stateless,
+  active-active; IO-bound on K8s API calls; validated at 200 VU load with 0% errors).
 - **Lifetime Daemon**: A separate lightweight Deployment in the `ctfd`
   namespace that polls managed Deployments every 5 minutes and enforces the
   60-minute lifetime.
@@ -405,7 +406,7 @@ matching `derive_flag(team_id, challenge_id)`.
 
 - Q: When the plugin's background status fetch fails (controller unreachable or non-200), what should the badge and buttons show? → A: Show "Unknown" badge + disabled button + "Retry" link; log the error to the browser console. Stale status must not be silently preserved.
 - Q: After clicking Start, should the instance URL be shown immediately (even before the pod is Ready) or only after the pod is accepting connections? → A: Show URL immediately after `/activate` returns, alongside a note "Instance is starting, may take ~30 seconds". No readiness polling required.
-- Q: Should the controller API run at 1 or 2 replicas? → A: 2 replicas (active-active, stateless — safe with no coordination needed; prevents single-pod restart from blocking all teams mid-event).
+- Q: Should the controller API run at 1 or 2 replicas? → A: Started at 2 replicas; scaled to 8 under 200-VU load testing (50 teams × 4 players). IO-bound FastAPI benefits from more replicas with 8 uvicorn workers each.
 - Q: What should `GET /status/{team_id}` return when the team has no Deployments (e.g., bulk_spawn not yet run)? → A: `200 { "challenges": [] }` — empty list, never 404.
 - Q: When `bulk_spawn.py` is re-run and a TCP port for a service already exists in the NGINX ConfigMap, what should it do? → A: Read ConfigMap first; skip ports already assigned to any service; assign new ports only to new services (preserves live assignments across re-runs).
 - Q: How is the 4-pod cap counted — by Deployment replicas or by running Pod
@@ -444,9 +445,9 @@ matching `derive_flag(team_id, challenge_id)`.
   present in the ConfigMap. This preserves live port assignments across
   re-runs and prevents collisions.
 - The controller and daemon run with dedicated ServiceAccounts that have
-  scoped RBAC permissions. `k8s/controller/rbac.yaml` defines:
+  scoped RBAC permissions. `k8s/rbac/challenge-controller-rbac.yaml` defines:
   - `ServiceAccount: ctf-controller` in the `ctfd` namespace
-  - `Role: ctf-controller` in `challenges` namespace (get/list/create/patch on Deployments, Secrets, Services, Ingresses)
-  - `Role: ctf-controller-nginx` in `ingress-nginx` namespace (get/patch on ConfigMaps, for `tcp-services`)
+  - `Role: ctf-controller` in `challenges` namespace (`get, list, watch, create, update, patch` on Deployments, Secrets, Services, Ingresses — no `delete`; teardown uses admin kubeconfig)
+  - `Role: ctf-controller-nginx` in `ingress-nginx` namespace (`get, patch` on ConfigMaps, for `tcp-services`)
   - Two `RoleBindings` connecting the ServiceAccount to each Role
   (Originally deferred to Phase 5 — delivered in Phase 3.)

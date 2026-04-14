@@ -96,10 +96,10 @@ Do NOT open the event until every item in the Ops Readiness section is checked.
   Activate 4 challenges for team-999, then attempt a 5th
   Expected: controller returns HTTP 409 or 429 with error message about max instances
 
-- [ ] HTTP challenge isolation: team-A cannot access team-B's HTTP challenge URL
-  Log in as team-2, visit `https://team-1-web-sqli.challenges.infodays.net/`
-  Expected: redirected to `https://ctfd.infodays.net/login` (nginx auth_request → 403 → redirect)
-  Note: TCP challenges (nc) are NOT isolated by URL — HMAC flags prevent cross-team scoring anyway
+- [ ] HTTP challenge URL format is correct (NodePort, plain HTTP)
+  Activate a web challenge for team-999 and check the returned URL format.
+  Expected: `http://challenges.infodays.net:<nodeport>` (not https://, not team-specific subdomain)
+  Note: HTTP and TCP challenges share the same NodePort model — isolation is cryptographic only (HMAC flags per team)
 
 ---
 
@@ -131,9 +131,29 @@ Do NOT open the event until every item in the Ops Readiness section is checked.
   `kubectl get pvc redis-data-redis-0 -n ctfd`
   Expected: PVC bound, 1Gi
 
-- [ ] SESSION_COOKIE_DOMAIN set to `.infodays.net` in CTFd pods (required for challenge isolation)
+- [ ] SESSION_COOKIE_DOMAIN set to `.infodays.net` in CTFd pods
   `kubectl exec -n ctfd deployment/ctfd -- env | grep SESSION_COOKIE_DOMAIN`
   Expected: `SESSION_COOKIE_DOMAIN=.infodays.net`
+
+- [ ] Rate limiting active on CTFd ingress
+  `kubectl get ingress ctfd -n ctfd -o jsonpath='{.metadata.annotations}'`
+  Expected: `limit-rps: "20"` annotation present
+
+- [ ] Login rate limiting ingress deployed
+  `kubectl get ingress ctfd-login-ratelimit -n ctfd`
+  Expected: ingress exists (5 rps limit on /login, /register, /api/v1/auth)
+
+- [ ] PodDisruptionBudgets deployed
+  `kubectl get pdb -n ctfd`
+  Expected: ctfd-pdb (minAvailable 3), controller-api-pdb (minAvailable 6), mysql-pdb, redis-pdb
+
+- [ ] Challenge namespace resource quotas in place
+  `kubectl get resourcequota,limitrange -n challenges`
+  Expected: challenges-quota (250 pods max) and challenges-limits present
+
+- [ ] Pod security contexts enforced (no privilege escalation)
+  `kubectl get deployment ctfd -n ctfd -o jsonpath='{.spec.template.spec.securityContext}'`
+  Expected: runAsNonRoot=true
 
 ---
 
