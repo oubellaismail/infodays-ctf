@@ -86,5 +86,41 @@ kubectl exec -n ctfd mysql-replica-0 -- mysql -uroot -p"${MYSQL_PASS}" -e "
   SET GLOBAL super_read_only=ON;
 " 2>/dev/null
 echo "  done"
+
+# 7. Point ProxySQL hostgroup 1 (reader) at the replica
+# The configmap ships with both hostgroups pointing at the primary as a safe default.
+# Now that replication is confirmed healthy, patch hostgroup 1 to use mysql-replica.
+echo ""
+echo "Updating ProxySQL configmap — routing reads to replica..."
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || (cd "$(dirname "$0")/.." && pwd))"
+CONFIGMAP="${REPO_ROOT}/k8s/ctfd/proxysql-configmap.yaml"
+
+# Check if the configmap already points to the replica (idempotent)
+if grep -q 'mysql-replica.ctfd.svc.cluster.local' "$CONFIGMAP"; then
+  echo "  ProxySQL configmap already points to replica — skipping patch"
+else
+  # Replace only the hostgroup=1 entry's address (second occurrence of the primary hostname)
+  awk '
+    /address="mysql\.ctfd\.svc\.cluster\.local"/ {
+      count++
+      if (count == 2) {
+        sub(/address="mysql\.ctfd\.svc\.cluster\.local"/, "address=\"mysql-replica.ctfd.svc.cluster.local\"")
+      }
+    }
+    { print }
+  ' "$CONFIGMAP" > "${CONFIGMAP}.tmp" && mv "${CONFIGMAP}.tmp" "$CONFIGMAP"
+  echo "  Configmap updated on disk"
+fi
+
+kubectl apply -f "$CONFIGMAP"
+kubectl rollout restart deployment/proxysql -n ctfd
+kubectl rollout status deployment/proxysql -n ctfd --timeout=60s
+
+echo "  done — SELECT queries now route to mysql-replica"
+echo ""
+echo "Verify routing:"
+echo "  kubectl exec -n ctfd deployment/proxysql -- mysql -h127.0.0.1 -P6032 -uadmin -padmin \\"
+echo "    -e \"SELECT hostgroup,srv_host,status,ConnUsed FROM stats.stats_mysql_connection_pool;\""
 echo ""
 echo "Setup complete."
