@@ -317,6 +317,20 @@ else
   step "Applying PodDisruptionBudgets..."
   kubectl apply -f "$K8S/ctfd/pdb.yaml"
 
+  # ── Backup CronJob ────────────────────────────────────────────────────────
+  if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+    step "Deploying automated backup CronJob..."
+    kubectl create secret generic spaces-backup-credentials \
+      --from-literal=AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID}" \
+      --from-literal=AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY}" \
+      -n "$CTFD_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+    kubectl apply -f "$K8S/ctfd/backup-cronjob.yaml"
+    ok "Backup CronJob deployed (every 30 min → DO Spaces)"
+  else
+    warn "AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY not set — skipping backup CronJob"
+    warn "Set them and run: kubectl apply -f k8s/ctfd/backup-cronjob.yaml"
+  fi
+
   step "Waiting for CTFd to be ready (may take 2–3 min)..."
   kubectl rollout status deployment/ctfd -n "$CTFD_NAMESPACE" --timeout=300s
   ok "CTFd ready"
