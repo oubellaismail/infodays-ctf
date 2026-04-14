@@ -20,9 +20,20 @@ spec:
         - sh
         - -c
         - until nc -z proxysql 6033; do echo waiting for proxysql; sleep 2; done
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: ctfd
         image: ctfd/ctfd:latest
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
         env:
         - name: MYSQL_PASSWORD
           valueFrom:
@@ -49,6 +60,14 @@ spec:
               key: CTF_MASTER_SECRET
         - name: SERVER_SENT_EVENTS
           value: "false"
+        - name: RATELIMIT_ENABLED
+          value: "true"
+        - name: RATELIMIT_KEY
+          value: "ip"
+        - name: RATELIMIT_DEFAULT
+          value: "100 per minute"
+        - name: RATELIMIT_LOGIN
+          value: "10 per minute"
         - name: WORKERS
           value: "4"
         - name: REVERSE_PROXY

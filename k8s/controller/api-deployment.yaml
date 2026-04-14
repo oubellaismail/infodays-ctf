@@ -22,6 +22,11 @@ spec:
       - name: controller-api
         image: registry.digitalocean.com/infodays-registry/base:controller-api
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
         ports:
         - containerPort: 5000
           name: http
@@ -69,6 +74,9 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
 
 ---
 apiVersion: v1

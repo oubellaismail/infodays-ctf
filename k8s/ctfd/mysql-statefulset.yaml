@@ -14,9 +14,23 @@ spec:
       labels:
         app: mysql
     spec:
+      securityContext:
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: mysql
         image: mysql:8
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+            add:
+              - CHOWN
+              - SETUID
+              - SETGID
+              - DAC_OVERRIDE
         args:
         - --max-connections=500
         - --innodb-buffer-pool-size=2147483648

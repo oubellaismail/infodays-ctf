@@ -13,6 +13,9 @@ spec:
       labels:
         app: proxysql
     spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
       - name: proxysql-init
         image: busybox:1.36
@@ -37,6 +40,16 @@ spec:
       containers:
       - name: proxysql
         image: proxysql/proxysql:2.6.3
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+            add:
+              - CHOWN
+              - SETUID
+              - SETGID
+              - NET_BIND_SERVICE
         command:
         - proxysql
         - -f

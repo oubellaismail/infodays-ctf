@@ -53,8 +53,12 @@ data:
             max_connections=200
             weight=1000
         },
+        # NOTE: Replica removed from reader group until replication is verified working.
+        # Both reads and writes go to primary. Add replica back after verifying:
+        #   bash scripts/setup-mysql-replication.sh  (verify Replica_SQL_Running=Yes)
+        #   Then add: {address="mysql-replica...", port=3306, hostgroup=1, ...}
         {
-            address="mysql-replica.ctfd.svc.cluster.local"
+            address="mysql.ctfd.svc.cluster.local"
             port=3306
             hostgroup=1
             max_connections=200
