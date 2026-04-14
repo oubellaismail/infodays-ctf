@@ -11,13 +11,15 @@ Also registers a custom 'team' flag type that:
   - Makes it cryptographically impossible to score points using another team's flag
 """
 
-from flask import Blueprint, request as flask_request, jsonify, Response, make_response
+from flask import Blueprint, request as flask_request, jsonify, Response, make_response, send_file
 import urllib.request
 import urllib.error
 import json
 import hmac as _hmac
 import hashlib
 import os
+import io
+import zipfile
 from datetime import datetime
 
 
@@ -256,6 +258,71 @@ def load(app):
         data = flask_request.get_json(silent=True) or {}
         return _proxy("POST", "/deactivate", data)
 
+    # ── Per-team static challenge download ───────────────────────────────────
+
+    @blueprint.route("/download/<challenge_manifest_id>")
+    def download_static(challenge_manifest_id):
+        """
+        Serve a per-team zip for static/file-download challenges.
+
+        Each team gets a unique zip containing flag.txt with their HMAC-derived
+        flag (same formula as service challenges). If custom content exists in
+        challenges/static-content/{id}/, it is included alongside flag.txt.
+
+        Auth: requires logged-in user with a team.
+        """
+        import re
+        from CTFd.utils.user import get_current_user, get_current_team
+
+        # Validate challenge_manifest_id to prevent path traversal
+        if not re.match(r'^[a-z0-9-]+$', challenge_manifest_id):
+            return jsonify({"error": "invalid challenge id"}), 400
+
+        user = get_current_user()
+        if not user:
+            return jsonify({"error": "unauthorized"}), 401
+
+        team = get_current_team()
+        if not team:
+            return jsonify({"error": "no team"}), 403
+
+        master_secret = os.environ.get("CTF_MASTER_SECRET", "")
+        if not master_secret:
+            return jsonify({"error": "server misconfigured"}), 500
+
+        # Derive the team-specific flag
+        flag = _derive(team.id, challenge_manifest_id, master_secret)
+
+        # Build zip in memory
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Include custom content if it exists
+            static_base = os.path.abspath(os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "challenges", "static-content",
+            ))
+            content_dir = os.path.abspath(os.path.join(static_base, challenge_manifest_id))
+            # Guard against path traversal escaping the static-content directory
+            if not content_dir.startswith(static_base + os.sep):
+                return jsonify({"error": "access denied"}), 403
+            if os.path.isdir(content_dir):
+                for root, _dirs, files in os.walk(content_dir):
+                    for fname in files:
+                        full = os.path.join(root, fname)
+                        arcname = os.path.relpath(full, content_dir)
+                        zf.write(full, arcname)
+
+            # Always add/overwrite flag.txt
+            zf.writestr("flag.txt", flag)
+
+        buf.seek(0)
+        return send_file(
+            buf,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=f"{challenge_manifest_id}.zip",
+        )
+
     # ── Challenge isolation: nginx auth_request endpoint ─────────────────────
 
     @blueprint.route("/team-verify")
@@ -392,5 +459,7 @@ def load(app):
             db.session.commit()
 
         if not Configs.query.filter_by(key="X_CONTROLLER_KEY").first():
-            db.session.add(Configs(key="X_CONTROLLER_KEY", value="CHANGE_ME"))
-            db.session.commit()
+            app.logger.error(
+                "X_CONTROLLER_KEY not found in database — "
+                "run setup-ctfd.sh or set it manually in /admin/config before the event"
+            )

@@ -13,19 +13,19 @@ rules:
   # Deployments: create (bulk_spawn), get/list/patch (api + daemon)
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
   # Services: create (bulk_spawn)
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["get", "list", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "create", "update", "patch"]
   # Secrets: create (bulk_spawn)
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "list", "create", "update", "patch", "delete"]
-  # Ingresses: create (bulk_spawn)
+    verbs: ["get", "list", "create", "update", "patch"]
+  # Ingresses: create (bulk_spawn) — delete removed; teardown uses admin kubeconfig
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
-    verbs: ["get", "list", "create", "update", "patch", "delete"]
+    verbs: ["get", "list", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
