@@ -57,71 +57,115 @@ REQUIRED_COLUMNS = {"team_name", "player_name", "email", "password"}
 def build_plain(player_name: str, team_name: str, password: str,
                 ctfd_url: str, event_date: str) -> str:
     return f"""\
-Hi {player_name},
+InfoDays CTF — Login Credentials
+=================================
 
-You've been registered for InfoDays CTF as part of team "{team_name}".
+Hello {player_name},
 
-Your login credentials
-──────────────────────
+You have been registered for InfoDays CTF as a member of team "{team_name}".
+
+Your credentials
+----------------
   Username : {player_name}
   Password : {password}
 
-  Login at : {ctfd_url}
+  Platform : {ctfd_url}
   Starts   : {event_date}
   Rules    : {ctfd_url}/rules
 
-Keep these credentials safe — do not share them with other teams.
+Keep these credentials private. Do not share them with other teams.
 
-Good luck!
-— InfoDays CTF Team
+Good luck,
+InfoDays CTF Team
 """
 
 
 def build_html(player_name: str, team_name: str, password: str,
                ctfd_url: str, event_date: str) -> str:
+
     return f"""\
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <style>
-    body {{ font-family: Arial, sans-serif; color: #222; max-width: 560px; margin: 40px auto; }}
-    h2   {{ color: #1a1a2e; }}
-    .box {{ background: #f5f5f5; border-left: 4px solid #e94560;
-            padding: 16px 20px; border-radius: 4px; margin: 24px 0; }}
-    .box table {{ border-collapse: collapse; width: 100%; }}
-    .box td {{ padding: 4px 8px; }}
-    .box td:first-child {{ color: #666; width: 90px; }}
-    .box td:last-child {{ font-family: monospace; font-size: 15px; font-weight: bold; }}
-    .links {{ margin-top: 20px; }}
-    .links a {{ color: #e94560; }}
-    .footer {{ margin-top: 32px; color: #999; font-size: 12px; }}
-  </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>InfoDays CTF — Login Credentials</title>
 </head>
-<body>
-  <h2>InfoDays CTF — Your Login Credentials</h2>
-  <p>Hi <strong>{player_name}</strong>,</p>
-  <p>You've been registered for <strong>InfoDays CTF</strong> as part of team
-     <strong>{team_name}</strong>.</p>
+<body style="margin:0;padding:0;background-color:#f4f4f4;font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#222;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f4f4;padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table width="540" cellpadding="0" cellspacing="0" border="0"
+               style="max-width:540px;width:100%;background-color:#ffffff;border:1px solid #dddddd;">
 
-  <div class="box">
-    <table>
-      <tr><td>Username</td><td>{player_name}</td></tr>
-      <tr><td>Password</td><td>{password}</td></tr>
-    </table>
-  </div>
+          <!-- Header -->
+          <tr>
+            <td style="padding:24px 32px;border-bottom:1px solid #dddddd;">
+              <span style="font-size:18px;font-weight:bold;color:#222;">InfoDays CTF</span>
+            </td>
+          </tr>
 
-  <div class="links">
-    <p>
-      🔐 <strong>Login:</strong> <a href="{ctfd_url}">{ctfd_url}</a><br>
-      🕐 <strong>Starts:</strong> {event_date}<br>
-      📋 <strong>Rules:</strong> <a href="{ctfd_url}/rules">{ctfd_url}/rules</a>
-    </p>
-  </div>
+          <!-- Body -->
+          <tr>
+            <td style="padding:28px 32px;">
+              <p style="margin:0 0 16px;">Hello {player_name},</p>
+              <p style="margin:0 0 24px;">
+                You have been registered for <strong>InfoDays CTF</strong> as a member of team <strong>{team_name}</strong>.
+                Use the credentials below to log in to the platform.
+              </p>
 
-  <p>Keep these credentials safe — do not share them with other teams.</p>
-  <p>Good luck!</p>
-  <div class="footer">— InfoDays CTF Team</div>
+              <!-- Credentials -->
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                     style="background-color:#f9f9f9;border:1px solid #dddddd;margin-bottom:24px;">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <table cellpadding="4" cellspacing="0" border="0">
+                      <tr>
+                        <td style="color:#666;width:90px;">Username</td>
+                        <td style="font-family:'Courier New',Courier,monospace;font-weight:bold;">{player_name}</td>
+                      </tr>
+                      <tr>
+                        <td style="color:#666;">Password</td>
+                        <td style="font-family:'Courier New',Courier,monospace;font-weight:bold;">{password}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- Details -->
+              <table cellpadding="4" cellspacing="0" border="0" style="margin-bottom:24px;">
+                <tr>
+                  <td style="color:#666;width:90px;vertical-align:top;">Platform</td>
+                  <td><a href="{ctfd_url}" style="color:#222;">{ctfd_url}</a></td>
+                </tr>
+                <tr>
+                  <td style="color:#666;vertical-align:top;">Starts</td>
+                  <td>{event_date}</td>
+                </tr>
+                <tr>
+                  <td style="color:#666;vertical-align:top;">Rules</td>
+                  <td><a href="{ctfd_url}/rules" style="color:#222;">{ctfd_url}/rules</a></td>
+                </tr>
+              </table>
+
+              <p style="margin:0;color:#666;font-size:13px;">
+                Keep these credentials private. Do not share them with other teams.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:16px 32px;border-top:1px solid #dddddd;font-size:12px;color:#999;">
+              InfoDays CTF Team
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
 </body>
 </html>
 """
