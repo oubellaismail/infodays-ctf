@@ -1,0 +1,30 @@
+id: lab-mancity
+name: "Lab ManCity"
+category: lab
+type: http
+port: 8080
+image: registry.digitalocean.com/infodays-registry/base:web
+lab: true
+description: |
+  ManCity is a multi-stage web lab. Find each flag and submit it to earn
+  points independently — the lab stays open until you capture them all.
+  Points accumulate: capture 3/4 flags and you earn those 3 flags' points,
+  regardless of which order you find them in.
+memory_limit: 256Mi
+flags:
+  - id: mancity-recon
+    name: "Flag 1 — Reconnaissance"
+    env: FLAG_RECON
+    points: 100
+  - id: mancity-user
+    name: "Flag 2 — User"
+    env: FLAG_USER
+    points: 200
+  - id: mancity-root
+    name: "Flag 3 — Root"
+    env: FLAG_ROOT
+    points: 300
+  - id: mancity-bonus
+    name: "Flag 4 — Bonus / Post-Exploitation"
+    env: FLAG_BONUS
+    points: 100

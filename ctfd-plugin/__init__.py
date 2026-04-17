@@ -36,6 +36,34 @@ def _derive(team_id, challenge_manifest_id, master_secret):
     return f"infodays{{{digest}}}"
 
 
+def _parse_flag_data(raw):
+    """
+    Parse a Flags.data value.
+
+    Regular team-flag rows store a plain string (the manifest id):
+        data = "web-sqli"  →  ("web-sqli", 0, "web-sqli")
+
+    Lab sub-flag rows store JSON with sub_id / points / deployment_id:
+        data = '{"sub_id": "mancity-user", "points": 100, "deployment_id": "lab-mancity"}'
+               → ("mancity-user", 100, "lab-mancity")
+
+    Returns (sub_id, points, deployment_id). Falls back to the raw string on parse failure.
+    """
+    if not raw:
+        return "", 0, ""
+    if isinstance(raw, str) and raw.lstrip().startswith("{"):
+        try:
+            obj = json.loads(raw)
+            return (
+                obj.get("sub_id", "") or "",
+                int(obj.get("points", 0) or 0),
+                obj.get("deployment_id", "") or "",
+            )
+        except Exception:
+            pass
+    return raw, 0, raw
+
+
 def _log_cheater(submitting_team_id, submitting_user_id, submitted_flag, owner_team_id, challenge_manifest_id):
     """Insert a row into the cheaters table. Never raises."""
     try:
@@ -97,13 +125,15 @@ class CTFdTeamFlag:
         user = get_current_user()
         user_id = user.id if user else None
 
-        challenge_manifest_id = chal_key_obj.data or ""
+        # Parse flag data — supports both plain-string (regular challenges)
+        # and JSON (lab sub-flags). Only the sub_id is needed for HMAC.
+        sub_id, _points, _dep = _parse_flag_data(chal_key_obj.data or "")
         master_secret = os.environ.get("CTF_MASTER_SECRET", "")
-        if not master_secret or not challenge_manifest_id:
+        if not master_secret or not sub_id:
             return False
 
         # ── Check submitting team's own flag ──────────────────────────────────
-        expected = _derive(team.id, challenge_manifest_id, master_secret)
+        expected = _derive(team.id, sub_id, master_secret)
         if _hmac.compare_digest(expected, provided):
             return True
 
@@ -112,14 +142,320 @@ class CTFdTeamFlag:
             from CTFd.models import Teams
             all_teams = Teams.query.filter(Teams.id != team.id).all()
             for other in all_teams:
-                candidate = _derive(other.id, challenge_manifest_id, master_secret)
+                candidate = _derive(other.id, sub_id, master_secret)
                 if _hmac.compare_digest(candidate, provided):
-                    _log_cheater(team.id, user_id, provided, other.id, challenge_manifest_id)
+                    _log_cheater(team.id, user_id, provided, other.id, sub_id)
                     break
         except Exception:
             pass  # Never crash flag validation due to cheating detection
 
         return False
+
+
+# ── Lab challenge type (HTB-style, per-flag point accumulation) ──────────────
+#
+# One CTFd challenge card → N flag rows (each with JSON-encoded sub_id + points).
+# Submitting any correct sub-flag awards its points via the native CTFd Award
+# model, which adds directly to the team's score. The challenge is only
+# marked "Solved" (Solves row) once every sub-flag has been captured.
+#
+# lab_solves table: (team_id, sub_id) — idempotency, prevents double-awarding
+# on a re-submission of the same flag. Also drives the per-team progress UI.
+
+def _lab_progress_rows(team_id):
+    """Return set of captured sub_ids for a given team. Safe against DB failures."""
+    try:
+        from CTFd.models import db
+        from sqlalchemy import text
+        rows = db.session.execute(
+            text("SELECT sub_id FROM lab_solves WHERE team_id = :tid"),
+            {"tid": team_id},
+        ).fetchall()
+        return {r.sub_id for r in rows}
+    except Exception:
+        return set()
+
+
+def _lab_insert_solve(team_id, user_id, challenge_id, sub_id, points):
+    """
+    Insert an idempotent lab_solves row.
+
+    Returns True only when THIS call actually inserted a new row — False if
+    the UNIQUE (team_id, sub_id) constraint already had a matching row. This
+    prevents concurrent submissions from both awarding points: the second
+    INSERT IGNORE silently no-ops and we return False, skipping the Award.
+    """
+    from CTFd.models import db
+    from sqlalchemy import text
+    try:
+        result = db.session.execute(
+            text("""
+                INSERT IGNORE INTO lab_solves
+                    (team_id, user_id, challenge_id, sub_id, points, solved_at)
+                VALUES
+                    (:tid, :uid, :cid, :sid, :pts, :ts)
+            """),
+            {
+                "tid": team_id,
+                "uid": user_id,
+                "cid": challenge_id,
+                "sid": sub_id,
+                "pts": int(points),
+                "ts": datetime.utcnow(),
+            },
+        )
+        db.session.commit()
+        # MySQL returns rowcount=1 for inserted, 0 for ignored duplicate.
+        return (result.rowcount or 0) > 0
+    except Exception:
+        db.session.rollback()
+        return False
+
+
+def _build_lab_challenge_class():
+    """
+    Factory: build the LabChallenge class at plugin load time so we can import
+    CTFd modules safely inside app context.
+    """
+    from CTFd.plugins.challenges import CHALLENGE_CLASSES, BaseChallenge
+    from CTFd.models import db, Challenges, Flags, Solves, Awards
+    from CTFd.utils.user import get_current_team, get_current_user
+    from flask import g as flask_g
+
+    def _get_ip(request):
+        return request.headers.get("X-Forwarded-For", request.remote_addr or "")
+
+    class LabChallenge(BaseChallenge):
+        """
+        HTB-style lab challenge: one CTFd card, multiple flags, accumulating points.
+
+        attempt() iterates all team-flag rows for the challenge and checks each
+        against the submission. On a match, solve() records the capture and
+        awards the sub-flag's points via the Awards table. The standard Solves
+        row is only written once every sub-flag has been captured.
+        """
+        id = "lab"
+        name = "lab"
+        # Reuse CTFd's built-in standard challenge admin templates. Labs are
+        # created via the /api/v1/challenges endpoint in deploy-challenge.sh,
+        # not via the admin UI, so these are fallbacks for editing only.
+        templates = {
+            "create": "/plugins/challenges/assets/create.html",
+            "update": "/plugins/challenges/assets/update.html",
+            "view":   "/plugins/challenges/assets/view.html",
+        }
+        scripts = {
+            "create": "/plugins/challenges/assets/create.js",
+            "update": "/plugins/challenges/assets/update.js",
+            "view":   "/plugins/challenges/assets/view.js",
+        }
+        challenge_model = Challenges
+
+        @classmethod
+        def read(cls, challenge):
+            """
+            Return the challenge dict rendered in the modal.
+
+            Adds two lab-specific fields:
+              - lab: true
+              - lab_flags: [{sub_id, points, captured}] for the current team
+              - lab_total_points: sum of sub-flag points
+              - lab_earned_points: sum already awarded to the current team
+            """
+            # Compute lab totals up front so we can expose them as the card's
+            # displayed `value`. The DB keeps challenge.value=0 so Solves
+            # rows contribute 0 — all scoring flows through per-sub-flag
+            # Awards. Overriding `value` here is purely a display shim.
+            entries = []
+            total = 0
+            earned = 0
+            try:
+                team = get_current_team()
+                captured = _lab_progress_rows(team.id) if team else set()
+                flags = Flags.query.filter_by(challenge_id=challenge.id, type="team").all()
+                for f in flags:
+                    sub_id, pts, _dep = _parse_flag_data(f.data or "")
+                    if not sub_id:
+                        continue
+                    is_cap = sub_id in captured
+                    entries.append({
+                        "sub_id":   sub_id,
+                        "points":   pts,
+                        "captured": is_cap,
+                    })
+                    total += pts
+                    if is_cap:
+                        earned += pts
+            except Exception:
+                pass
+
+            data = {
+                "id":          challenge.id,
+                "name":        challenge.name,
+                # Display the total across all sub-flags on the card.
+                # DB value stays 0 for scoring correctness — see deploy-challenge.sh.
+                "value":       total if total > 0 else challenge.value,
+                "description": challenge.description,
+                "category":    challenge.category,
+                "state":       challenge.state,
+                "max_attempts": challenge.max_attempts,
+                "type":        challenge.type,
+                "type_data":   {
+                    "id":        cls.id,
+                    "name":      cls.name,
+                    "templates": cls.templates,
+                    "scripts":   cls.scripts,
+                },
+                "lab":                True,
+                "lab_flags":          entries,
+                "lab_total_points":   total,
+                "lab_earned_points":  earned,
+            }
+            return data
+
+        @classmethod
+        def attempt(cls, challenge, request):
+            """
+            Check the submission against every team-flag row for this challenge.
+
+            Return values match BaseChallenge contract: (bool, str). On True,
+            CTFd core calls solve() and records a "correct" Submission. On a
+            repeat capture we return False to avoid inflating the Solves count
+            and to display a clear "already captured" message to the player.
+            """
+            data = request.form or request.get_json() or {}
+            submission = (data.get("submission") or "").strip()
+            if not submission:
+                return False, "Missing flag"
+
+            team = get_current_team()
+            if team is None:
+                return False, "Must be on a team"
+
+            user = get_current_user()
+            user_id = user.id if user else None
+
+            master_secret = os.environ.get("CTF_MASTER_SECRET", "")
+            if not master_secret:
+                return False, "Challenge unavailable"
+
+            flags = Flags.query.filter_by(challenge_id=challenge.id, type="team").all()
+            already_captured = _lab_progress_rows(team.id)
+
+            matched_sub_id = None
+            matched_points = 0
+
+            for f in flags:
+                sub_id, pts, _dep = _parse_flag_data(f.data or "")
+                if not sub_id:
+                    continue
+                expected = _derive(team.id, sub_id, master_secret)
+                if _hmac.compare_digest(expected, submission):
+                    matched_sub_id = sub_id
+                    matched_points = pts
+                    break
+
+            if matched_sub_id is None:
+                # Cheater check — did the submission match another team's sub-flag?
+                try:
+                    from CTFd.models import Teams
+                    others = Teams.query.filter(Teams.id != team.id).all()
+                    for f in flags:
+                        sub_id, _pts, _dep = _parse_flag_data(f.data or "")
+                        if not sub_id:
+                            continue
+                        for other in others:
+                            candidate = _derive(other.id, sub_id, master_secret)
+                            if _hmac.compare_digest(candidate, submission):
+                                _log_cheater(team.id, user_id, submission, other.id, sub_id)
+                                return False, "Incorrect"
+                except Exception:
+                    pass
+                return False, "Incorrect"
+
+            if matched_sub_id in already_captured:
+                # Returning False avoids double-awarding points and keeps the
+                # Submissions table free of spurious "correct" rows.
+                return False, "You've already captured this flag"
+
+            # Stash the match on flask.g so solve() can read it without
+            # redoing the HMAC loop. flask.g is request-scoped and safe.
+            flask_g._lab_match = {
+                "sub_id": matched_sub_id,
+                "points": matched_points,
+                "total_flags": len(flags),
+            }
+            return True, f"Flag captured — +{matched_points} points"
+
+        @classmethod
+        def solve(cls, user, team, challenge, request):
+            """
+            Called by CTFd core after attempt() returns True. Records:
+              - lab_solves row (idempotent) — drives progress UI
+              - Award row — adds points to team score immediately
+              - Solves row — only when every sub-flag is now captured (marks card "Solved")
+              - Submission row — standard "correct" record for activity feed
+            """
+            match = getattr(flask_g, "_lab_match", None) or {}
+            sub_id = match.get("sub_id", "")
+            points = int(match.get("points", 0))
+            total_flags = int(match.get("total_flags", 0))
+
+            if not sub_id:
+                return
+
+            submission = (
+                (request.form or request.get_json() or {}).get("submission") or ""
+            )
+
+            inserted = _lab_insert_solve(
+                team_id=team.id,
+                user_id=user.id if user else None,
+                challenge_id=challenge.id,
+                sub_id=sub_id,
+                points=points,
+            )
+            if not inserted:
+                return
+
+            try:
+                # 1. Award the sub-flag's points — directly added to team score.
+                award = Awards(
+                    user_id=user.id if user else None,
+                    team_id=team.id,
+                    name=f"{challenge.name}: {sub_id}",
+                    description=f"Lab sub-flag: {sub_id}",
+                    value=points,
+                    category=challenge.category,
+                )
+                db.session.add(award)
+
+                # 2. On the final capture, insert a native Solves row so the
+                #    challenge card flips to "Solved" and the team appears on
+                #    the challenge's solver list. challenge.value is set to 0
+                #    by deploy-challenge.sh for labs, so Solves adds no extra
+                #    points — all scoring flows through Awards.
+                captured_now = _lab_progress_rows(team.id)
+                if total_flags > 0 and len(captured_now) >= total_flags:
+                    existing = Solves.query.filter_by(
+                        team_id=team.id, challenge_id=challenge.id
+                    ).first()
+                    if not existing:
+                        final_solve = Solves(
+                            user_id=user.id if user else None,
+                            team_id=team.id,
+                            challenge_id=challenge.id,
+                            ip=_get_ip(request),
+                            provided=submission,
+                        )
+                        db.session.add(final_solve)
+
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
+    CHALLENGE_CLASSES["lab"] = LabChallenge
+    return LabChallenge
 
 
 # ── Plugin entry point ───────────────────────────────────────────────────────
@@ -362,6 +698,67 @@ def load(app):
             return "", 200
         return "", 403
 
+    # ── Lab progress endpoint (per-team, per-challenge) ──────────────────────
+
+    @blueprint.route("/controller-plugin/lab-progress/<int:challenge_id>")
+    def lab_progress(challenge_id):
+        """
+        Return lab progress for the current team on a given CTFd challenge.
+
+        Response:
+          {
+            "total_flags": 4, "total_points": 700,
+            "captured_flags": 2, "earned_points": 300,
+            "flags": [ {"sub_id": "...", "points": 100, "captured": true}, ... ]
+          }
+
+        Used by plugin.js to render the progress panel inside the challenge modal
+        and the total/earned pts badge on the board card.
+        """
+        if not _check_authed():
+            return jsonify({"error": "unauthorized"}), 401
+
+        try:
+            from CTFd.models import Challenges, Flags
+            from CTFd.utils.user import get_current_team
+
+            challenge = Challenges.query.filter_by(id=challenge_id).first()
+            if not challenge or challenge.type != "lab":
+                return jsonify({"error": "not a lab challenge"}), 404
+
+            team = get_current_team()
+            if not team:
+                return jsonify({"error": "no team"}), 403
+
+            captured = _lab_progress_rows(team.id)
+            flags = Flags.query.filter_by(challenge_id=challenge_id, type="team").all()
+
+            entries = []
+            total_points = 0
+            earned_points = 0
+            captured_flags = 0
+            for f in flags:
+                sub_id, pts, _dep = _parse_flag_data(f.data or "")
+                if not sub_id:
+                    continue
+                is_cap = sub_id in captured
+                entries.append({"sub_id": sub_id, "points": pts, "captured": is_cap})
+                total_points += pts
+                if is_cap:
+                    earned_points += pts
+                    captured_flags += 1
+
+            return jsonify({
+                "challenge_id":    challenge_id,
+                "total_flags":     len(entries),
+                "captured_flags":  captured_flags,
+                "total_points":    total_points,
+                "earned_points":   earned_points,
+                "flags":           entries,
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
     # ── Cheaters admin endpoint ───────────────────────────────────────────────
 
     @blueprint.route("/admin/cheaters")
@@ -415,6 +812,9 @@ def load(app):
     from CTFd.plugins.flags import FLAG_CLASSES
     FLAG_CLASSES["team"] = CTFdTeamFlag
 
+    # ── Register custom 'lab' challenge type (HTB-style accumulating points) ─
+    _build_lab_challenge_class()
+
     # ── Register scripts ──────────────────────────────────────────────────────
     register_script("/controller-plugin/config.js")
     register_script("/plugins/controller-plugin/assets/plugin.js")
@@ -447,6 +847,27 @@ def load(app):
         except Exception:
             db.session.rollback()
             app.logger.warning("cheaters table CREATE skipped (likely read-replica routing) — table should already exist")
+
+        # lab_solves: per-team, per-sub-flag idempotency + progress UI source
+        try:
+            db.session.execute(text("""
+                CREATE TABLE IF NOT EXISTS lab_solves (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    team_id      INT          NOT NULL,
+                    user_id      INT              NULL,
+                    challenge_id INT          NOT NULL,
+                    sub_id       VARCHAR(255) NOT NULL,
+                    points       INT          NOT NULL DEFAULT 0,
+                    solved_at    DATETIME     NOT NULL,
+                    UNIQUE KEY uq_team_sub (team_id, sub_id),
+                    INDEX idx_team      (team_id),
+                    INDEX idx_challenge (challenge_id)
+                )
+            """))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.warning("lab_solves table CREATE skipped (likely read-replica routing) — table should already exist")
 
         if not Configs.query.filter_by(key="CONTROLLER_URL").first():
             db.session.add(

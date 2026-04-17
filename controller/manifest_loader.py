@@ -49,19 +49,21 @@ def load_flag_entries(manifest_dir: str = "challenges/manifests") -> list:
     """
     entries = []
     for manifest in load_manifests(manifest_dir):
-        if "flags" in manifest:
-            # Bundle manifest — expand each flag entry
+        if manifest.get("lab") is True and "flags" in manifest:
+            # Lab manifest — kept as a single entry. Maps to ONE CTFd challenge
+            # with multiple flag rows; import_flags.py handles the multi-flag case.
+            entries.append(manifest)
+        elif "flags" in manifest:
+            # Legacy bundle manifest — expand each flag entry into its own
+            # CTFd challenge (old behavior, kept for backward compatibility).
             for flag in manifest["flags"]:
                 entry = {
-                    # Inherit deployment fields from parent
                     "image": manifest.get("image"),
                     "port": manifest.get("port"),
                     "type": manifest.get("type"),
                     "memory_limit": manifest.get("memory_limit", "128Mi"),
                     "extra_ports": manifest.get("extra_ports", []),
-                    # Flag-level fields (override parent if present)
                     **flag,
-                    # Back-reference to parent deployment id
                     "_parent_id": manifest["id"],
                 }
                 entries.append(entry)

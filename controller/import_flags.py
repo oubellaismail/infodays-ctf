@@ -7,6 +7,7 @@ Idempotent: safe to re-run. Skips flags that already exist.
 
 import os
 import sys
+import json
 import argparse
 import logging
 from typing import Any
@@ -153,6 +154,69 @@ def import_flag(ctfd_url: str, admin_token: str, challenge: dict, challenge_id_m
         raise
 
 
+def import_lab_flags(ctfd_url: str, admin_token: str, lab: dict, challenge_id_map: dict) -> tuple[int, int]:
+    """
+    Import one team-bound flag row per sub-flag for a lab challenge.
+
+    Lab manifests produce ONE CTFd challenge with N flag rows. Each flag row
+    stores a JSON blob in the 'data' field so the LabChallenge class can read
+    both the sub-flag id (for HMAC) and the point value (for partial awards):
+
+        type    = "team"
+        content = "team-derived:{sub_id}"   (unique placeholder — lets import skip existing rows)
+        data    = JSON: {"sub_id": "...", "points": N, "deployment_id": "..."}
+
+    Returns (created_count, skipped_count).
+    """
+    lab_name = lab.get("name", "")
+    lab_id = lab["id"]
+    ctfd_challenge_id = challenge_id_map.get(lab_name)
+
+    if not ctfd_challenge_id:
+        logger.warning(f"Lab challenge not found in CTFd: {lab_name}")
+        return (0, 0)
+
+    # Fetch existing flag "content" strings so we can skip already-imported sub-flags
+    existing = fetch_existing_flags(ctfd_url, admin_token, ctfd_challenge_id)
+
+    url = f"{ctfd_url}/api/v1/flags"
+    headers = {"Authorization": f"Token {admin_token}", "Content-Type": "application/json"}
+
+    created = 0
+    skipped = 0
+
+    for sub in lab.get("flags", []):
+        sub_id = sub.get("id")
+        sub_points = int(sub.get("points", 0))
+        if not sub_id:
+            logger.error(f"Lab {lab_id}: sub-flag missing 'id' — skipped")
+            continue
+
+        marker = f"team-derived:{sub_id}"
+        if marker in existing:
+            logger.info(f"Skipped (exists): {lab_name} / {sub_id}")
+            skipped += 1
+            continue
+
+        flag_data = json.dumps({
+            "sub_id": sub_id,
+            "points": sub_points,
+            "deployment_id": lab_id,
+        })
+        body = {
+            "challenge_id": ctfd_challenge_id,
+            "type": "team",
+            "content": marker,
+            "data": flag_data,
+        }
+        response = httpx.post(url, headers=headers, json=body)
+        response.raise_for_status()
+        logger.info(f"Created lab flag: {lab_name} / {sub_id} ({sub_points} pts)")
+        created += 1
+
+    return (created, skipped)
+
+
 def main(ctfd_url: str, admin_token: str) -> None:
     """Entry point for flag import workflow."""
     logger.info("Starting flag import (team-bound mode)...")
@@ -163,20 +227,26 @@ def main(ctfd_url: str, admin_token: str) -> None:
 
     challenge_id_map = fetch_challenges(ctfd_url, admin_token)
 
-    # Use load_flag_entries() so that bundle manifests (multi-flag challenges)
-    # are expanded into individual CTFd challenge entries. Each entry has a
-    # unique 'id' used as the 'data' field in the "team" flag type, and a
-    # 'name' used to look up the CTFd challenge ID.
-    challenges = [c for c in load_flag_entries()
-                  if c.get("category", "").lower() in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}]
-    logger.info(f"Loaded {len(challenges)} flag entries (including bundle expansions)")
+    # Allowed categories for flag import (excludes internal-only)
+    ALLOWED_CATEGORIES = {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint", "lab"}
 
-    # One team flag row per challenge — no team loop needed
+    # Lab manifests are handled separately — one CTFd challenge, N flag rows.
+    # Non-lab manifests use the existing single-flag / expanded-bundle path.
+    labs = [m for m in load_manifests()
+            if m.get("lab") is True
+            and m.get("category", "").lower() in ALLOWED_CATEGORIES]
+    non_lab_entries = [c for c in load_flag_entries()
+                       if not (c.get("lab") is True)
+                       and c.get("category", "").lower() in ALLOWED_CATEGORIES]
+
+    logger.info(f"Loaded {len(labs)} lab manifests and {len(non_lab_entries)} regular flag entries")
+
     created = 0
     skipped = 0
     errors = 0
 
-    for challenge in challenges:
+    # Regular single-flag / legacy-bundle entries
+    for challenge in non_lab_entries:
         try:
             result = import_flag(ctfd_url, admin_token, challenge, challenge_id_map)
             if result == "created":
@@ -185,6 +255,16 @@ def main(ctfd_url: str, admin_token: str) -> None:
                 skipped += 1
         except Exception as e:
             logger.error(f"Error importing flag for {challenge['id']}: {e}")
+            errors += 1
+
+    # Lab manifests: N flag rows per CTFd challenge
+    for lab in labs:
+        try:
+            c, s = import_lab_flags(ctfd_url, admin_token, lab, challenge_id_map)
+            created += c
+            skipped += s
+        except Exception as e:
+            logger.error(f"Error importing lab flags for {lab['id']}: {e}")
             errors += 1
 
     logger.info(f"Done: {created} created, {skipped} skipped, {errors} errors")

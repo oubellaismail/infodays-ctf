@@ -77,6 +77,20 @@ CHALLENGE_DESC="$(read_field description)"
 CHALLENGE_INITIAL="$(read_field initial)"
 CHALLENGE_MINIMUM="$(read_field minimum)"
 CHALLENGE_DECAY="$(read_field decay)"
+CHALLENGE_IS_LAB="$(read_field lab)"
+
+# Lab challenges: sum(flag.points) becomes the CTFd card's displayed value
+if [ "$CHALLENGE_IS_LAB" = "True" ] || [ "$CHALLENGE_IS_LAB" = "true" ]; then
+  CHALLENGE_IS_LAB="true"
+  LAB_TOTAL_POINTS=$(python3 -c "
+import yaml
+with open('$MANIFEST_FILE') as f:
+    m = yaml.safe_load(f)
+print(sum(int(fl.get('points', 0)) for fl in m.get('flags', [])))
+")
+else
+  CHALLENGE_IS_LAB="false"
+fi
 
 [ -n "$CHALLENGE_ID" ]       || fail "Manifest missing 'id'"
 [ -n "$CHALLENGE_NAME" ]     || fail "Manifest missing 'name'"
@@ -133,8 +147,36 @@ for ch in data.get('data', []):
 
 if [ -n "$EXISTING" ]; then
   ok "Already exists in CTFd (id=$EXISTING)"
+elif [ "$CHALLENGE_IS_LAB" = "true" ]; then
+  # Lab challenge — one CTFd card, type=lab. value=0 because all scoring is
+  # done via per-sub-flag Awards rows (LabChallenge.solve in the plugin).
+  # Setting value=LAB_TOTAL_POINTS here would double-count on the final solve.
+  # The card subtitle is re-rendered by plugin.js to show "earned/total pts".
+  DESC="${CHALLENGE_DESC:-Lab: ${CHALLENGE_NAME}}"
+  CTFD_CHALLENGE_ID=$(python3 -c "
+import json, urllib.request, sys
+body = json.dumps({
+    'name': sys.argv[1],
+    'category': sys.argv[2],
+    'description': sys.argv[3],
+    'value': 0,
+    'state': 'visible',
+    'type': 'lab'
+}).encode()
+req = urllib.request.Request(
+    '${CTFD_URL}/api/v1/challenges',
+    data=body,
+    headers={'Authorization': 'Token ${CTFD_ADMIN_TOKEN}', 'Content-Type': 'application/json'},
+    method='POST'
+)
+resp = urllib.request.urlopen(req, timeout=10)
+data = json.loads(resp.read())
+print(data['data']['id'])
+" "$CHALLENGE_NAME" "$CHALLENGE_CATEGORY" "$DESC")
+  ok "Created lab in CTFd (id=$CTFD_CHALLENGE_ID, total=$LAB_TOTAL_POINTS pts across sub-flags)"
+  EXISTING="$CTFD_CHALLENGE_ID"
 else
-  # Create the challenge with dynamic scoring
+  # Regular challenge with dynamic scoring
   DESC="${CHALLENGE_DESC:-Challenge: ${CHALLENGE_NAME}}"
   CTFD_CHALLENGE_ID=$(python3 -c "
 import json, urllib.request, sys
@@ -289,10 +331,14 @@ echo "======================================"
 echo "  ID:       $CHALLENGE_ID"
 echo "  Category: $CHALLENGE_CATEGORY"
 echo "  Type:     $CHALLENGE_TYPE"
-echo "  Scoring:  dynamic ($CHALLENGE_INITIAL → $CHALLENGE_MINIMUM, decay=$CHALLENGE_DECAY)"
+if [ "$CHALLENGE_IS_LAB" = "true" ]; then
+  echo "  Mode:     lab (accumulate per-flag points — total $LAB_TOTAL_POINTS)"
+else
+  echo "  Scoring:  dynamic ($CHALLENGE_INITIAL → $CHALLENGE_MINIMUM, decay=$CHALLENGE_DECAY)"
+fi
 
 if [ "$CHALLENGE_TYPE" = "http" ]; then
-  echo "  URL:      https://team-{ID}-${CHALLENGE_ID}.challenges.infodays.net"
+  echo "  URL:      http://challenges.infodays.net:{node_port}"
 else
   echo "  Access:   nc challenges.infodays.net {port}"
 fi

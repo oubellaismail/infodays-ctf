@@ -24,6 +24,36 @@
 # minimum: 50                # Optional
 # decay: 25                  # Optional
 
+# ── Lab challenge example (HTB-style, one box with multiple accumulating flags) ──
+# id: lab-mancity
+# name: "Lab ManCity"
+# category: lab              # Shows under the "lab" category on the board
+# image: registry.digitalocean.com/infodays-registry/lab-mancity:latest
+# port: 8080
+# type: http                 # http or tcp — one pod serves all flags
+# lab: true                  # Marks this as an HTB-style lab (single CTFd card, N flags)
+# description: "Pwn the ManCity box. Each flag awards points independently."
+# flags:
+#   - id: mancity-user
+#     name: "User Flag"
+#     env: FLAG_USER         # Env var injected into pod (pod reads its own flag from env)
+#     points: 100            # Flat points awarded the instant this flag is submitted
+#   - id: mancity-root
+#     name: "Root Flag"
+#     env: FLAG_ROOT
+#     points: 200
+#   - id: mancity-suid
+#     name: "SUID Escalation"
+#     env: FLAG_SUID
+#     points: 150
+#
+# Lab behavior:
+#   - One CTFd challenge card — displayed total value = sum(flag.points)
+#   - Players submit any flag; points accumulate (Award row per capture)
+#   - Card flips to "Solved" only when every flag has been captured
+#   - Same HMAC-per-team isolation — cross-team submission still caught as cheating
+#   - One Deployment + one Service per team (normal bundle wiring in bulk_spawn)
+
 # ── Field descriptions ──
 # - id: Unique challenge identifier (lowercase, hyphenated, e.g., web-sqli)
 # - name: Human-readable challenge name

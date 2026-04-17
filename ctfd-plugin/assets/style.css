@@ -537,3 +537,97 @@ footer,
     font-size: 1.5rem;
   }
 }
+
+/* ── Lab progress panel (HTB-style multi-flag accumulation) ────────────── */
+
+.ctf-lab-progress {
+  margin: 0.75rem 0 1rem 0;
+  padding: 0.9rem 1rem;
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: 8px;
+  font-size: 0.92rem;
+}
+
+.ctf-lab-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.ctf-lab-header strong {
+  color: var(--bs-body-color);
+  letter-spacing: 0.02em;
+}
+
+.ctf-lab-summary {
+  color: var(--bs-secondary-color);
+  font-variant-numeric: tabular-nums;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.ctf-lab-bar {
+  height: 6px;
+  background: var(--bs-secondary-bg);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 0.75rem;
+}
+
+.ctf-lab-bar-fill {
+  height: 100%;
+  background: var(--bs-primary);
+  transition: width 0.4s ease;
+}
+
+.ctf-lab-flags {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.ctf-lab-flag {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.3rem 0;
+  color: var(--bs-secondary-color);
+}
+
+.ctf-lab-flag--captured {
+  color: var(--bs-body-color);
+}
+
+.ctf-lab-mark {
+  display: inline-block;
+  width: 1rem;
+  text-align: center;
+  font-weight: 700;
+  color: var(--bs-secondary-color);
+}
+
+.ctf-lab-flag--captured .ctf-lab-mark {
+  color: var(--bs-success, #1A7F4E);
+}
+
+.ctf-lab-sub-id {
+  flex: 1;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.ctf-lab-sub-pts {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--bs-secondary-color);
+}
+
+.ctf-lab-flag--captured .ctf-lab-sub-pts {
+  color: var(--bs-success, #1A7F4E);
+}

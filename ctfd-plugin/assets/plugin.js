@@ -90,7 +90,7 @@
     return; // not logged in or no team
   }
 
-  var SERVICE_CATEGORIES = ["web", "pwn", "misc", "crypto", "forensics", "reversing", "osint", "stego"];
+  var SERVICE_CATEGORIES = ["web", "pwn", "misc", "crypto", "forensics", "reversing", "osint", "stego", "lab"];
 
   // Global instance state — tracks all running instances for board indicators
   var allInstanceStatuses = {}; // { challenge_id: { status, url } }
@@ -100,6 +100,9 @@
   var currentChallengeId = null;
   var currentStatus = null;
   var refreshTimer = null;
+  var currentCtfdChallengeId = null;   // CTFd numeric challenge id (for lab-progress)
+  var currentIsLab = false;
+  var labProgressTimer = null;
 
   // ─── CTFd API helpers ───────────────────────────────────────────────────────
 
@@ -146,6 +149,84 @@
       console.error("[ctf-controller] status fetch failed:", err);
       return undefined; // undefined = error, null = not found
     }
+  }
+
+  // ─── Lab progress (HTB-style multi-flag accumulation) ─────────────────────
+
+  async function fetchLabProgress(ctfdChallengeId) {
+    try {
+      var resp = await ctfdFetch("/controller-plugin/lab-progress/" + ctfdChallengeId);
+      if (!resp.ok) return null;
+      return await resp.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function renderLabProgress(progress) {
+    var container = document.getElementById("ctf-lab-progress");
+    if (!container) {
+      var desc = document.querySelector(".challenge-desc") ||
+                 document.querySelector(".modal-body");
+      if (!desc) return;
+      container = document.createElement("div");
+      container.id = "ctf-lab-progress";
+      container.className = "ctf-lab-progress";
+      desc.parentNode.insertBefore(container, desc);
+    }
+    if (!progress) {
+      container.innerHTML = "";
+      return;
+    }
+
+    var pct = progress.total_points > 0
+      ? Math.round((progress.earned_points / progress.total_points) * 100)
+      : 0;
+
+    var flagsHtml = (progress.flags || []).map(function (f) {
+      var mark = f.captured ? "\u2713" : "\u25CB";
+      var cls  = f.captured ? "ctf-lab-flag ctf-lab-flag--captured" : "ctf-lab-flag";
+      return '<li class="' + cls + '">' +
+               '<span class="ctf-lab-mark">' + mark + '</span>' +
+               '<span class="ctf-lab-sub-id">' + escapeHtml(f.sub_id) + '</span>' +
+               '<span class="ctf-lab-sub-pts">' + f.points + ' pts</span>' +
+             '</li>';
+    }).join("");
+
+    container.innerHTML =
+      '<div class="ctf-lab-header">' +
+        '<strong>Lab progress</strong>' +
+        '<span class="ctf-lab-summary">' +
+          progress.captured_flags + '/' + progress.total_flags + ' flags \u00B7 ' +
+          progress.earned_points + '/' + progress.total_points + ' pts' +
+        '</span>' +
+      '</div>' +
+      '<div class="ctf-lab-bar"><div class="ctf-lab-bar-fill" style="width:' + pct + '%"></div></div>' +
+      '<ul class="ctf-lab-flags">' + flagsHtml + '</ul>';
+  }
+
+  function escapeHtml(s) {
+    if (s == null) return "";
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  async function updateLabProgress() {
+    if (!currentIsLab || !currentCtfdChallengeId) return;
+    var progress = await fetchLabProgress(currentCtfdChallengeId);
+    renderLabProgress(progress);
+  }
+
+  function startLabProgressPolling() {
+    stopLabProgressPolling();
+    updateLabProgress();
+    labProgressTimer = setInterval(updateLabProgress, 8000);
+  }
+
+  function stopLabProgressPolling() {
+    if (labProgressTimer) clearInterval(labProgressTimer);
+    labProgressTimer = null;
   }
 
   // ─── UI rendering ───────────────────────────────────────────────────────────
@@ -439,11 +520,16 @@
     openingId = numericId;
 
     stopPolling();
+    stopLabProgressPolling();
     currentChallengeId = null;
     currentStatus = null;
+    currentCtfdChallengeId = null;
+    currentIsLab = false;
 
     var old = document.getElementById("ctf-controller-ui");
     if (old) old.remove();
+    var oldLab = document.getElementById("ctf-lab-progress");
+    if (oldLab) oldLab.remove();
 
     var info = await fetchChallengeInfo(numericId);
     if (openingId !== numericId) return;
@@ -459,18 +545,29 @@
       return;
     }
 
-    // Derive deployment ID from the CTFd flag's 'data' field (manifest entry ID).
-    // This handles bundle manifests where the CTFd challenge name is e.g.
-    // "Man City — View Source" but the deployment is "man-city".
-    // The flag data field is e.g. "man-city-1" → strip trailing -N → "man-city".
+    currentCtfdChallengeId = info.id;
+    currentIsLab = info.type === "lab";
+
+    // Derive deployment ID from the CTFd flag's 'data' field. For lab
+    // challenges the data field is a JSON blob containing deployment_id;
+    // for regular/legacy bundle flags it's a plain string possibly with a
+    // trailing bundle suffix (-1, -2, ...) that we strip.
     try {
       var flagResp = await ctfdFetch("/api/v1/flags?challenge_id=" + numericId + "&per_page=1");
       if (flagResp.ok) {
         var flagData = await flagResp.json();
         var teamFlag = (flagData.data || []).find(function (f) { return f.type === "team"; });
         if (teamFlag && teamFlag.data) {
-          // Strip trailing bundle suffix (-1, -2, ...) to get deployment ID
-          currentChallengeId = teamFlag.data.replace(/-\d+$/, "");
+          var raw = teamFlag.data;
+          if (raw.charAt(0) === "{") {
+            try {
+              var obj = JSON.parse(raw);
+              currentChallengeId = obj.deployment_id || obj.sub_id || null;
+            } catch (e) { /* fall through */ }
+          }
+          if (!currentChallengeId) {
+            currentChallengeId = raw.replace(/-\d+$/, "");
+          }
         }
       }
     } catch (e) { /* fall through to name-based slug */ }
@@ -480,17 +577,26 @@
     }
     if (!currentChallengeId) return;
 
-    console.log("[ctf-controller] challenge opened:", currentChallengeId);
+    console.log("[ctf-controller] challenge opened:", currentChallengeId, currentIsLab ? "(lab)" : "");
     updateUI();
     startPolling();
+
+    if (currentIsLab) {
+      startLabProgressPolling();
+    }
   }
 
   function onModalClose() {
     stopPolling();
+    stopLabProgressPolling();
     openingId = null;
     currentChallengeId = null;
+    currentCtfdChallengeId = null;
+    currentIsLab = false;
     var ui = document.getElementById("ctf-controller-ui");
     if (ui) ui.remove();
+    var lab = document.getElementById("ctf-lab-progress");
+    if (lab) lab.remove();
   }
 
   function watchChallengeModal() {
