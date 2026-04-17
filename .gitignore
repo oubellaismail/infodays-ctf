@@ -65,6 +65,12 @@ __pycache__/
 # Challenge build artifacts (contain generated flags)
 dist/
 
+# Real qualification challenges source repo (private — cloned separately)
+challenges/real/
+
+# Per-team static artifacts (generated at deploy time)
+challenges/static-content/
+
 # Phase 6: Event Readiness & Runbook
 backups/*.sql
 tests/load/results/*.json

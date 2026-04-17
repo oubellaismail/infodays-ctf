@@ -53,6 +53,45 @@ from flag import derive_flag
 from manifest_loader import load_manifests
 from naming import deployment_name, secret_name, service_name, ingress_name, managed_labels
 
+
+def _flag_env_vars(team_id: str, challenge: dict) -> tuple[dict, list]:
+    """Build (secret_data, env_var_list) for a challenge's flags.
+
+    Single-flag manifest: {FLAG: derive_flag(team_id, id)}, [EnvVar FLAG]
+    Bundle manifest:      {FLAG1: ..., FLAG2: ...},          [EnvVar FLAG1, FLAG2, ...]
+    """
+    if "flags" in challenge:
+        secret_data = {
+            entry["env"]: derive_flag(team_id, entry["id"])
+            for entry in challenge["flags"]
+        }
+        env_vars = [
+            V1EnvVar(
+                name=entry["env"],
+                value_from=V1EnvVarSource(
+                    secret_key_ref=V1SecretKeySelector(
+                        name=secret_name(team_id, challenge["id"]),
+                        key=entry["env"],
+                    )
+                ),
+            )
+            for entry in challenge["flags"]
+        ]
+    else:
+        secret_data = {"FLAG": derive_flag(team_id, challenge["id"])}
+        env_vars = [
+            V1EnvVar(
+                name="FLAG",
+                value_from=V1EnvVarSource(
+                    secret_key_ref=V1SecretKeySelector(
+                        name=secret_name(team_id, challenge["id"]),
+                        key="FLAG",
+                    )
+                ),
+            )
+        ]
+    return secret_data, env_vars
+
 logger = logging.getLogger(__name__)
 
 
@@ -99,13 +138,14 @@ def create_secret(core_v1: Any, team_id: str, challenge: dict) -> str:
     challenge_id = challenge["id"]
     sec_name = secret_name(team_id, challenge_id)
 
+    secret_data, _ = _flag_env_vars(team_id, challenge)
     body = V1Secret(
         metadata=V1ObjectMeta(
             name=sec_name,
             namespace="challenges",
             labels=managed_labels(team_id, challenge_id),
         ),
-        string_data={"FLAG": derive_flag(team_id, challenge_id)},
+        string_data=secret_data,
     )
 
     try:
@@ -135,21 +175,16 @@ def create_deployment(apps_v1: Any, team_id: str, challenge: dict) -> str:
     dep_name = deployment_name(team_id, challenge_id)
     labels = managed_labels(team_id, challenge_id)
 
+    _, env_vars = _flag_env_vars(team_id, challenge)
+    all_ports = [V1ContainerPort(container_port=challenge["port"])]
+    for extra in challenge.get("extra_ports", []):
+        all_ports.append(V1ContainerPort(container_port=extra["port"]))
+
     container = V1Container(
         name=challenge_id,
         image=challenge["image"],
-        ports=[V1ContainerPort(container_port=challenge["port"])],
-        env=[
-            V1EnvVar(
-                name="FLAG",
-                value_from=V1EnvVarSource(
-                    secret_key_ref=V1SecretKeySelector(
-                        name=secret_name(team_id, challenge_id),
-                        key="FLAG",
-                    )
-                ),
-            )
-        ],
+        ports=all_ports,
+        env=env_vars,
         resources=V1ResourceRequirements(
             limits={"cpu": "0.5", "memory": challenge.get("memory_limit", "128Mi")},
             requests={"cpu": "0.05", "memory": "32Mi"},
@@ -410,8 +445,11 @@ def main(ctfd_url: str, admin_token: str) -> None:
     logger.info(f"Fetched {len(teams)} teams")
 
     # Load challenge manifests (service challenges only — static/file challenges have no pods)
+    # Bundle manifests have no top-level category; include them if they have a flags list
+    # (bundle manifests are always service challenges by definition)
     challenges = [c for c in load_manifests()
-                  if c["category"] in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}
+                  if (c.get("category", "").lower() in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}
+                      or "flags" in c)
                   and c.get("type") != "static"]
     logger.info(f"Loaded {len(challenges)} service challenges")
 

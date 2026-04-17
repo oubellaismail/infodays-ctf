@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: static-files-server
+  namespace: ctfd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: static-files-server
+  template:
+    metadata:
+      labels:
+        app: static-files-server
+    spec:
+      containers:
+        - name: nginx
+          image: registry.digitalocean.com/infodays-registry/base:static-files
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: static-files
+  namespace: ctfd
+spec:
+  selector:
+    app: static-files-server
+  ports:
+    - port: 80
+      targetPort: 80

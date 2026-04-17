@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 
 from flag import derive_flag
-from manifest_loader import load_manifests
+from manifest_loader import load_manifests, load_flag_entries
 
 logger = logging.getLogger(__name__)
 
@@ -163,12 +163,13 @@ def main(ctfd_url: str, admin_token: str) -> None:
 
     challenge_id_map = fetch_challenges(ctfd_url, admin_token)
 
-    # All challenges (service + static) use the custom 'team' flag type with
-    # HMAC-derived per-team flags. Static challenges serve per-team zips via
-    # the plugin download endpoint; service challenges validate on submission.
-    challenges = [c for c in load_manifests()
-                  if c["category"] in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}]
-    logger.info(f"Loaded {len(challenges)} challenges (service + static)")
+    # Use load_flag_entries() so that bundle manifests (multi-flag challenges)
+    # are expanded into individual CTFd challenge entries. Each entry has a
+    # unique 'id' used as the 'data' field in the "team" flag type, and a
+    # 'name' used to look up the CTFd challenge ID.
+    challenges = [c for c in load_flag_entries()
+                  if c.get("category", "").lower() in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}]
+    logger.info(f"Loaded {len(challenges)} flag entries (including bundle expansions)")
 
     # One team flag row per challenge — no team loop needed
     created = 0

@@ -29,6 +29,8 @@ CTFD_ADMIN_TOKEN="${CTFD_ADMIN_TOKEN:?ERROR: CTFD_ADMIN_TOKEN not set}"
 CTF_MASTER_SECRET="${CTF_MASTER_SECRET:?ERROR: CTF_MASTER_SECRET not set}"
 
 CTFD_NAMESPACE="${CTFD_NAMESPACE:-ctfd}"
+# Internal URL used by kubectl exec commands (bulk_spawn/import_flags run inside the cluster)
+CTFD_INTERNAL_URL="${CTFD_INTERNAL_URL:-http://ctfd-service.${CTFD_NAMESPACE}.svc.cluster.local}"
 CHALLENGE_NAMESPACE="${CHALLENGE_NAMESPACE:-challenges}"
 MANIFESTS_DIR="${MANIFESTS_DIR:-challenges/manifests}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -195,7 +197,7 @@ if [ "$CHALLENGE_TYPE" = "static" ]; then
   kubectl exec -n "$CTFD_NAMESPACE" "$CONTROLLER_POD" -- \
     env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
     python3 /app/import_flags.py \
-      --ctfd-url "$CTFD_URL" 2>&1 | while IFS= read -r line; do
+      --ctfd-url "$CTFD_INTERNAL_URL" 2>&1 | while IFS= read -r line; do
     echo "    $line"
   done
 
@@ -256,7 +258,7 @@ CONTROLLER_POD=$(kubectl get pods -n "$CTFD_NAMESPACE" -l app=controller-api \
 kubectl exec -n "$CTFD_NAMESPACE" "$CONTROLLER_POD" -- \
   env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
   python3 /app/bulk_spawn.py \
-    --ctfd-url "$CTFD_URL" \
+    --ctfd-url "$CTFD_INTERNAL_URL" \
     --token "$CTFD_ADMIN_TOKEN" 2>&1 | while IFS= read -r line; do
   echo "    $line"
 done
@@ -271,7 +273,7 @@ info "Step 6/6: Importing per-team flags into CTFd"
 kubectl exec -n "$CTFD_NAMESPACE" "$CONTROLLER_POD" -- \
   env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
   python3 /app/import_flags.py \
-    --ctfd-url "$CTFD_URL" 2>&1 | while IFS= read -r line; do
+    --ctfd-url "$CTFD_INTERNAL_URL" 2>&1 | while IFS= read -r line; do
   echo "    $line"
 done
 

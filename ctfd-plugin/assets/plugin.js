@@ -90,7 +90,7 @@
     return; // not logged in or no team
   }
 
-  var SERVICE_CATEGORIES = ["web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"];
+  var SERVICE_CATEGORIES = ["web", "pwn", "misc", "crypto", "forensics", "reversing", "osint", "stego"];
 
   // Global instance state — tracks all running instances for board indicators
   var allInstanceStatuses = {}; // { challenge_id: { status, url } }
@@ -459,7 +459,23 @@
       return;
     }
 
-    if (info.name) {
+    // Derive deployment ID from the CTFd flag's 'data' field (manifest entry ID).
+    // This handles bundle manifests where the CTFd challenge name is e.g.
+    // "Man City — View Source" but the deployment is "man-city".
+    // The flag data field is e.g. "man-city-1" → strip trailing -N → "man-city".
+    try {
+      var flagResp = await ctfdFetch("/api/v1/flags?challenge_id=" + numericId + "&per_page=1");
+      if (flagResp.ok) {
+        var flagData = await flagResp.json();
+        var teamFlag = (flagData.data || []).find(function (f) { return f.type === "team"; });
+        if (teamFlag && teamFlag.data) {
+          // Strip trailing bundle suffix (-1, -2, ...) to get deployment ID
+          currentChallengeId = teamFlag.data.replace(/-\d+$/, "");
+        }
+      }
+    } catch (e) { /* fall through to name-based slug */ }
+
+    if (!currentChallengeId && info.name) {
       currentChallengeId = info.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
     }
     if (!currentChallengeId) return;

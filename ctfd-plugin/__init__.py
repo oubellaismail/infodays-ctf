@@ -265,16 +265,16 @@ def load(app):
         """
         Serve a per-team zip for static/file-download challenges.
 
-        Each team gets a unique zip containing flag.txt with their HMAC-derived
-        flag (same formula as service challenges). If custom content exists in
-        challenges/static-content/{id}/, it is included alongside flag.txt.
+        Fetches the pre-generated zip from the static-files-server:
+          1. /{challenge_id}/{team_id}.zip  — per-team artifact (flag baked in)
+          2. /{challenge_id}/default.zip    — fallback for hardcoded-flag challenges
 
         Auth: requires logged-in user with a team.
         """
         import re
+        import urllib.request as _ureq
         from CTFd.utils.user import get_current_user, get_current_team
 
-        # Validate challenge_manifest_id to prevent path traversal
         if not re.match(r'^[a-z0-9-]+$', challenge_manifest_id):
             return jsonify({"error": "invalid challenge id"}), 400
 
@@ -286,35 +286,31 @@ def load(app):
         if not team:
             return jsonify({"error": "no team"}), 403
 
-        master_secret = os.environ.get("CTF_MASTER_SECRET", "")
-        if not master_secret:
-            return jsonify({"error": "server misconfigured"}), 500
+        STATIC_FILES_URL = os.environ.get(
+            "STATIC_FILES_URL",
+            "http://static-files.ctfd.svc.cluster.local",
+        )
 
-        # Derive the team-specific flag
-        flag = _derive(team.id, challenge_manifest_id, master_secret)
+        # Try per-team zip first, fall back to default.zip
+        candidates = [
+            f"{STATIC_FILES_URL}/{challenge_manifest_id}/{team.id}.zip",
+            f"{STATIC_FILES_URL}/{challenge_manifest_id}/default.zip",
+        ]
 
-        # Build zip in memory
-        buf = io.BytesIO()
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            # Include custom content if it exists
-            static_base = os.path.abspath(os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "challenges", "static-content",
-            ))
-            content_dir = os.path.abspath(os.path.join(static_base, challenge_manifest_id))
-            # Guard against path traversal escaping the static-content directory
-            if not content_dir.startswith(static_base + os.sep):
-                return jsonify({"error": "access denied"}), 403
-            if os.path.isdir(content_dir):
-                for root, _dirs, files in os.walk(content_dir):
-                    for fname in files:
-                        full = os.path.join(root, fname)
-                        arcname = os.path.relpath(full, content_dir)
-                        zf.write(full, arcname)
+        zip_data = None
+        for url in candidates:
+            try:
+                with _ureq.urlopen(url, timeout=10) as resp:
+                    if resp.status == 200:
+                        zip_data = resp.read()
+                        break
+            except Exception:
+                continue
 
-            # Always add/overwrite flag.txt
-            zf.writestr("flag.txt", flag)
+        if not zip_data:
+            return jsonify({"error": "challenge files not available"}), 404
 
+        buf = io.BytesIO(zip_data)
         buf.seek(0)
         return send_file(
             buf,
