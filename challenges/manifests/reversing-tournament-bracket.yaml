@@ -1,0 +1,27 @@
+id: tournament-bracket
+name: "Tournament Bracket"
+category: Reversing
+description: "Reverse-engineer a tournament bracket binary. Three flags across group stage, knockout, and final."
+initial: 1050
+minimum: 155
+decay: 15
+type: static
+flags:
+  - id: tournament-bracket-1
+    name: "Tournament Bracket — Group Stage"
+    category: Reversing
+    initial: 200
+    minimum: 30
+    decay: 20
+  - id: tournament-bracket-2
+    name: "Tournament Bracket — Knockout"
+    category: Reversing
+    initial: 350
+    minimum: 50
+    decay: 15
+  - id: tournament-bracket-3
+    name: "Tournament Bracket — Final"
+    category: Reversing
+    initial: 500
+    minimum: 75
+    decay: 10

@@ -20,6 +20,7 @@ import hashlib
 import os
 import io
 import zipfile
+import threading
 from datetime import datetime
 
 
@@ -120,6 +121,264 @@ class CTFdTeamFlag:
             pass  # Never crash flag validation due to cheating detection
 
         return False
+
+
+# ── Multi-flag challenge type ─────────────────────────────────────────────────
+
+# Thread-local used to signal partial-progress returns in attempt() so that
+# fail() can suppress the Fails-table insert for those cases.
+_mf_tls = threading.local()
+
+
+def _register_multi_flag_model():
+    """Register a SQLAlchemy polymorphic subclass for multi_flag challenges.
+
+    CTFd's Challenges model uses type as a polymorphic discriminator.
+    Without a registered subclass, SQLAlchemy emits a warning when loading
+    challenges with type='multi_flag' and may not refresh them correctly.
+    This creates a minimal mapped subclass that satisfies the ORM.
+    """
+    try:
+        from CTFd.models import Challenges, db
+        # Check if already registered to avoid duplicate mapper error on hot-reload
+        if "multi_flag" not in Challenges.__mapper__.polymorphic_map:
+            class MultiFlagChallengeModel(Challenges):
+                __mapper_args__ = {"polymorphic_identity": "multi_flag"}
+            # Keep reference so the class isn't GC'd
+            _register_multi_flag_model._model = MultiFlagChallengeModel
+    except Exception:
+        pass  # Non-fatal — challenge still works via raw SQL
+
+
+class MultiFlagChallenge:
+    """
+    Custom CTFd challenge type for challenges with multiple independent flags.
+
+    Each flag (component) has its own scoring params (initial/minimum/decay).
+    Points are awarded incrementally via CTFd Awards as each component is found.
+    A Solves row is only inserted when ALL components are found.
+
+    Component data is stored in two plugin-managed tables:
+        multi_flag_components  — per-challenge component definitions
+        multi_flag_solves      — per-team per-component solve records
+    """
+
+    id = "multi_flag"
+    name = "multi_flag"
+    templates = {
+        "create": "/plugins/challenges/assets/create.html",
+        "update": "/plugins/challenges/assets/update.html",
+        "view":   "/plugins/challenges/assets/view.html",
+    }
+    scripts = {
+        "create": "/plugins/challenges/assets/create.js",
+        "update": "/plugins/challenges/assets/update.js",
+        "view":   "/plugins/challenges/assets/view.js",
+    }
+
+    @classmethod
+    def attempt(cls, challenge, request):
+        from CTFd.utils.user import get_current_user, get_current_team
+        from CTFd.models import Awards, db
+        from sqlalchemy import text
+
+        provided = (request.json or {}).get("submission", "").strip()
+        team = get_current_team()
+        user = get_current_user()
+        if not team or not user:
+            return (False, "No team")
+
+        master_secret = os.environ.get("CTF_MASTER_SECRET", "")
+        if not master_secret:
+            return (False, "Server configuration error")
+
+        # Load all components for this challenge
+        components = db.session.execute(
+            text("SELECT component_id, env_var, initial, minimum, decay, "
+                 "COALESCE(static_flag, '') "
+                 "FROM multi_flag_components WHERE challenge_id = :cid "
+                 "ORDER BY component_id"),
+            {"cid": challenge.id}
+        ).fetchall()
+
+        if not components:
+            return (False, "Challenge not configured — contact admin")
+
+        # Load this team's already-found components
+        solved_set = {row[0] for row in db.session.execute(
+            text("SELECT component_id FROM multi_flag_solves "
+                 "WHERE challenge_id = :cid AND team_id = :tid"),
+            {"cid": challenge.id, "tid": team.id}
+        ).fetchall()}
+
+        total = len(components)
+
+        for comp in components:
+            comp_id, env_var, initial, minimum, decay, static_flag = comp
+            if static_flag:
+                # File-based challenge: validate against pre-generated exact flag
+                if provided != static_flag:
+                    continue
+            else:
+                # Service challenge: validate against HMAC-derived flag
+                expected = _derive(team.id, comp_id, master_secret)
+                if not _hmac.compare_digest(expected, provided):
+                    continue
+
+            # Matched this component
+            if comp_id in solved_set:
+                _mf_tls.is_progress = True
+                return (False, "You already found this flag!")
+
+            # How many teams have already found this component (for decay calculation)
+            solve_count = db.session.execute(
+                text("SELECT COUNT(*) FROM multi_flag_solves WHERE component_id = :cid"),
+                {"cid": comp_id}
+            ).scalar() or 0
+
+            # Decayed score: linear from initial → minimum over decay solves
+            pts = max(minimum, initial - (initial - minimum) * solve_count // max(decay, 1))
+
+            # Record the solve
+            db.session.execute(
+                text("INSERT INTO multi_flag_solves "
+                     "(challenge_id, team_id, component_id, awarded_at) "
+                     "VALUES (:chid, :tid, :cmpid, NOW())"),
+                {"chid": challenge.id, "tid": team.id, "cmpid": comp_id}
+            )
+
+            # Grant an Award for the component points
+            db.session.add(Awards(
+                user_id=user.id,
+                team_id=team.id,
+                name=f"{challenge.name} [{comp_id}]",
+                description="multi_flag component",
+                value=pts,
+                category=challenge.category,
+                icon="flag",
+            ))
+            db.session.commit()
+
+            new_solved_count = len(solved_set) + 1
+            if new_solved_count == total:
+                # All flags found — solve() will be called to insert Solves row
+                return (True, f"All {total} flags found! Challenge complete!")
+
+            _mf_tls.is_progress = True
+            return (False, f"Flag found! {new_solved_count}/{total} complete. +{pts} pts")
+
+        # Cheating detection for HMAC-derived components (not static_flag)
+        try:
+            from CTFd.models import Teams
+            all_teams = Teams.query.filter(Teams.id != team.id).all()
+            for other in all_teams:
+                hmac_components = db.session.execute(
+                    text("SELECT component_id FROM multi_flag_components "
+                         "WHERE challenge_id = :cid "
+                         "AND (static_flag IS NULL OR static_flag = '')"),
+                    {"cid": challenge.id}
+                ).fetchall()
+                for (cmp_id,) in hmac_components:
+                    candidate = _derive(other.id, cmp_id, master_secret)
+                    if _hmac.compare_digest(candidate, provided):
+                        user_obj = get_current_user()
+                        _log_cheater(team.id, user_obj.id if user_obj else None,
+                                     provided, other.id, cmp_id)
+                        break
+        except Exception:
+            pass
+
+        return (False, "Incorrect")
+
+    @classmethod
+    def solve(cls, user, team, challenge, request):
+        """Insert a Solves row with value=0 (marks challenge fully complete)."""
+        from CTFd.models import Solves, db
+        solve = Solves(
+            user_id=user.id,
+            team_id=team.id if team else None,
+            challenge_id=challenge.id,
+            ip=request.remote_addr,
+            provided=(request.json or {}).get("submission", ""),
+        )
+        db.session.add(solve)
+        db.session.commit()
+
+    @classmethod
+    def fail(cls, user, team, challenge, request):
+        """Suppress Fails-table insertion for partial-progress responses."""
+        if getattr(_mf_tls, "is_progress", False):
+            _mf_tls.is_progress = False
+            return
+        # True wrong guess — call base implementation
+        try:
+            from CTFd.plugins.challenges import BaseChallenge
+            BaseChallenge.fail(user, team, challenge, request)
+        except Exception:
+            pass
+
+    @classmethod
+    def read(cls, challenge):
+        """Serialize challenge for API responses."""
+        data = {
+            "id": challenge.id,
+            "name": challenge.name,
+            "value": challenge.value,
+            "description": challenge.description,
+            "category": challenge.category,
+            "state": challenge.state,
+            "max_attempts": challenge.max_attempts,
+            "type": challenge.type,
+            "type_data": {
+                "id": cls.id,
+                "name": cls.name,
+                "templates": cls.templates,
+                "scripts": cls.scripts,
+            },
+        }
+        return data
+
+    @classmethod
+    def update(cls, challenge, request):
+        data = request.form or request.get_json()
+        for attr in ("name", "description", "value", "category", "state", "max_attempts"):
+            if attr in data:
+                setattr(challenge, attr, data[attr])
+        from CTFd.models import db
+        db.session.commit()
+        return challenge
+
+    @classmethod
+    def delete(cls, challenge):
+        from CTFd.models import db
+        from sqlalchemy import text
+        db.session.execute(
+            text("DELETE FROM multi_flag_components WHERE challenge_id = :cid"),
+            {"cid": challenge.id}
+        )
+        db.session.execute(
+            text("DELETE FROM multi_flag_solves WHERE challenge_id = :cid"),
+            {"cid": challenge.id}
+        )
+        db.session.delete(challenge)
+        db.session.commit()
+
+    @classmethod
+    def create(cls, request):
+        from CTFd.models import Challenges, db
+        data = request.form or request.get_json()
+        challenge = Challenges(
+            name=data["name"],
+            description=data.get("description", ""),
+            value=int(data.get("value", data.get("initial", 500))),
+            category=data.get("category", ""),
+            state=data.get("state", "visible"),
+            max_attempts=data.get("max_attempts", 0),
+            type="multi_flag",
+        )
+        db.session.add(challenge)
+        db.session.commit()
+        return challenge
 
 
 # ── Plugin entry point ───────────────────────────────────────────────────────
@@ -265,9 +524,9 @@ def load(app):
         """
         Serve a per-team zip for static/file-download challenges.
 
-        Fetches the pre-generated zip from the static-files-server:
-          1. /{challenge_id}/{team_id}.zip  — per-team artifact (flag baked in)
-          2. /{challenge_id}/default.zip    — fallback for hardcoded-flag challenges
+        Fetches {challenge_id}/{team_id}.zip from the static-files-server.
+        Files contain the challenge artifacts with flags already baked in by
+        generate-static-artifacts.py — no flag injection happens here.
 
         Auth: requires logged-in user with a team.
         """
@@ -291,29 +550,18 @@ def load(app):
             "http://static-files.ctfd.svc.cluster.local",
         )
 
-        # Try per-team zip first, fall back to default.zip
-        candidates = [
-            f"{STATIC_FILES_URL}/{challenge_manifest_id}/{team.id}.zip",
-            f"{STATIC_FILES_URL}/{challenge_manifest_id}/default.zip",
-        ]
-
-        zip_data = None
-        for url in candidates:
-            try:
-                with _ureq.urlopen(url, timeout=10) as resp:
-                    if resp.status == 200:
-                        zip_data = resp.read()
-                        break
-            except Exception:
-                continue
-
-        if not zip_data:
+        # Serve per-team zip: {challenge_id}/{team_id}.zip
+        files_url = f"{STATIC_FILES_URL}/{challenge_manifest_id}/{team.id}.zip"
+        try:
+            with _ureq.urlopen(files_url, timeout=10) as resp:
+                if resp.status != 200:
+                    return jsonify({"error": "challenge files not available"}), 404
+                zip_data = resp.read()
+        except Exception:
             return jsonify({"error": "challenge files not available"}), 404
 
-        buf = io.BytesIO(zip_data)
-        buf.seek(0)
         return send_file(
-            buf,
+            io.BytesIO(zip_data),
             mimetype="application/zip",
             as_attachment=True,
             download_name=f"{challenge_manifest_id}.zip",
@@ -361,6 +609,140 @@ def load(app):
         if team.id == challenge_team_id:
             return "", 200
         return "", 403
+
+    # ── Multi-flag progress endpoint ──────────────────────────────────────────
+
+    @blueprint.route("/api/plugin/multi-flag-progress/<int:challenge_id>")
+    def multi_flag_progress(challenge_id):
+        """
+        Returns per-team progress for a multi_flag challenge.
+        Any authenticated user can query their own progress.
+        """
+        if not _check_authed():
+            return jsonify({"error": "unauthorized"}), 401
+
+        try:
+            from CTFd.utils.user import get_current_team
+            from CTFd.models import db
+            from sqlalchemy import text
+
+            team = get_current_team()
+            team_id = team.id if team else None
+
+            components = db.session.execute(
+                text("SELECT component_id, initial, minimum, decay "
+                     "FROM multi_flag_components WHERE challenge_id = :cid "
+                     "ORDER BY component_id"),
+                {"cid": challenge_id}
+            ).fetchall()
+
+            total = len(components)
+            found_ids = set()
+            points_earned = 0
+
+            if team_id:
+                rows = db.session.execute(
+                    text("SELECT component_id FROM multi_flag_solves "
+                         "WHERE challenge_id = :cid AND team_id = :tid"),
+                    {"cid": challenge_id, "tid": team_id}
+                ).fetchall()
+                found_ids = {r[0] for r in rows}
+
+                # Sum points earned across all found components for this team
+                if found_ids and components:
+                    parent_prefix = components[0][0].rsplit("-", 1)[0]
+                    award_total = db.session.execute(
+                        text("SELECT COALESCE(SUM(value),0) FROM awards "
+                             "WHERE team_id = :tid AND description = 'multi_flag component' "
+                             "AND name LIKE :pattern"),
+                        {"tid": team_id, "pattern": f"% [{parent_prefix}-%]"}
+                    ).scalar() or 0
+                    points_earned = int(award_total)
+
+            return jsonify({
+                "total": total,
+                "found": len(found_ids),
+                "complete": len(found_ids) == total and total > 0,
+                "points_earned": points_earned,
+                "components": [
+                    {"component_id": row[0], "found": row[0] in found_ids}
+                    for row in components
+                ],
+            })
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # ── Multi-flag component registration endpoint ─────────────────────────────
+
+    @blueprint.route("/api/plugin/multi-flag-register", methods=["POST"])
+    def multi_flag_register():
+        """
+        Register component scoring params for a multi_flag challenge.
+        Called by import_flags.py after challenge creation.
+        Auth: CTFd admin API token in Authorization header.
+        Body: {challenge_id: int, components: [{component_id, env_var, initial, minimum, decay, flag?}]}
+        """
+        # Validate admin token
+        auth = flask_request.headers.get("Authorization", "")
+        if not auth.startswith("Token "):
+            return jsonify({"error": "unauthorized"}), 401
+        token_value = auth[6:].strip()
+
+        try:
+            from CTFd.models import db, Tokens, Users
+            tok = Tokens.query.filter_by(value=token_value).first()
+            if not tok:
+                return jsonify({"error": "invalid token"}), 401
+            user = Users.query.get(tok.user_id)
+            if not user or user.type != "admin":
+                return jsonify({"error": "admin only"}), 403
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+        body = flask_request.get_json(silent=True) or {}
+        challenge_id = body.get("challenge_id")
+        components = body.get("components", [])
+
+        if not challenge_id or not components:
+            return jsonify({"error": "challenge_id and components required"}), 400
+
+        try:
+            from CTFd.models import db
+            from sqlalchemy import text
+
+            upserted = 0
+            for comp in components:
+                static_flag = comp.get("flag") or comp.get("static_flag") or None
+                db.session.execute(
+                    text("""
+                        INSERT INTO multi_flag_components
+                            (challenge_id, component_id, env_var, initial, minimum, decay,
+                             static_flag)
+                        VALUES
+                            (:cid, :comp_id, :env, :initial, :minimum, :decay, :sflag)
+                        ON DUPLICATE KEY UPDATE
+                            env_var     = VALUES(env_var),
+                            initial     = VALUES(initial),
+                            minimum     = VALUES(minimum),
+                            decay       = VALUES(decay),
+                            static_flag = VALUES(static_flag)
+                    """),
+                    {
+                        "cid":     challenge_id,
+                        "comp_id": comp["component_id"],
+                        "env":     comp.get("env_var", ""),
+                        "initial": int(comp.get("initial", 500)),
+                        "minimum": int(comp.get("minimum", 50)),
+                        "decay":   int(comp.get("decay", 25)),
+                        "sflag":   static_flag,
+                    }
+                )
+                upserted += 1
+            db.session.commit()
+            return jsonify({"message": f"Registered {upserted} components for challenge {challenge_id}"})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"error": str(e)}), 500
 
     # ── Cheaters admin endpoint ───────────────────────────────────────────────
 
@@ -411,9 +793,13 @@ def load(app):
 
     app.register_blueprint(blueprint)
 
-    # ── Register custom 'team' flag type ─────────────────────────────────────
+    # ── Register custom flag + challenge types ────────────────────────────────
     from CTFd.plugins.flags import FLAG_CLASSES
     FLAG_CLASSES["team"] = CTFdTeamFlag
+
+    from CTFd.plugins.challenges import CHALLENGE_CLASSES
+    CHALLENGE_CLASSES["multi_flag"] = MultiFlagChallenge
+    _register_multi_flag_model()
 
     # ── Register scripts ──────────────────────────────────────────────────────
     register_script("/controller-plugin/config.js")
@@ -428,6 +814,52 @@ def load(app):
         # Wrapped in try/except because ProxySQL may route DDL to the read
         # replica, which rejects writes.  The table is created by whichever
         # pod reaches the primary first; subsequent pods can safely skip.
+        try:
+            db.session.execute(text("""
+                CREATE TABLE IF NOT EXISTS multi_flag_components (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    challenge_id INT          NOT NULL,
+                    component_id VARCHAR(255) NOT NULL,
+                    env_var      VARCHAR(50)  NOT NULL DEFAULT '',
+                    initial      INT          NOT NULL DEFAULT 500,
+                    minimum      INT          NOT NULL DEFAULT 50,
+                    decay        INT          NOT NULL DEFAULT 25,
+                    static_flag  VARCHAR(255) DEFAULT NULL,
+                    UNIQUE KEY uq_cc (challenge_id, component_id)
+                )
+            """))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.warning("multi_flag_components table CREATE skipped (likely read-replica routing)")
+
+        # Add static_flag column to existing deployments that pre-date this column.
+        try:
+            db.session.execute(text(
+                "ALTER TABLE multi_flag_components "
+                "ADD COLUMN IF NOT EXISTS static_flag VARCHAR(255) DEFAULT NULL"
+            ))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()  # Column already exists or routing issue — safe to ignore
+
+        try:
+            db.session.execute(text("""
+                CREATE TABLE IF NOT EXISTS multi_flag_solves (
+                    id           INT AUTO_INCREMENT PRIMARY KEY,
+                    challenge_id INT          NOT NULL,
+                    team_id      INT          NOT NULL,
+                    component_id VARCHAR(255) NOT NULL,
+                    awarded_at   DATETIME     NOT NULL,
+                    UNIQUE KEY uq_tc (team_id, component_id),
+                    INDEX idx_challenge_team (challenge_id, team_id)
+                )
+            """))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            app.logger.warning("multi_flag_solves table CREATE skipped (likely read-replica routing)")
+
         try:
             db.session.execute(text("""
                 CREATE TABLE IF NOT EXISTS cheaters (

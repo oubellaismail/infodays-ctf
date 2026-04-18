@@ -1,0 +1,9 @@
+id: stadium-soc
+name: "Stadium SOC"
+category: Forensics
+image: registry.digitalocean.com/infodays-registry/challenges:stadium-soc
+port: 8080
+type: http
+initial: 300
+minimum: 45
+decay: 20

@@ -75,7 +75,9 @@ manifest_files = sorted(glob.glob(os.path.join(manifests_dir, "*.yaml")))
 created = 0
 skipped = 0
 
-# Expand manifests into flat list of CTFd entries (bundle manifests → N entries)
+# Expand manifests into CTFd entries.
+# Bundle manifests → ONE entry with type=multi_flag (cumulative per-flag scoring).
+# Single-flag manifests → ONE entry with type=dynamic.
 entries = []
 for fpath in manifest_files:
     with open(fpath) as f:
@@ -84,16 +86,16 @@ for fpath in manifest_files:
         print(f"  SKIP (empty/invalid yaml): {fpath}")
         continue
     if "flags" in m:
-        # Bundle manifest — each flag entry is a CTFd challenge
-        for flag in m["flags"]:
-            entries.append({
-                "name": flag.get("name", ""),
-                "category": flag.get("category", m.get("category", "")),
-                "description": flag.get("description", m.get("description", f"Challenge: {flag.get('name', '')}")),
-                "initial": int(flag.get("initial", m.get("initial", 500))),
-                "minimum": int(flag.get("minimum", m.get("minimum", 50))),
-                "decay": int(flag.get("decay", m.get("decay", 25))),
-            })
+        # Bundle manifest — ONE CTFd entry for the whole challenge
+        entries.append({
+            "name": m.get("name", ""),
+            "category": m.get("category", ""),
+            "description": m.get("description", f"Challenge: {m.get('name', '')}"),
+            "initial": int(m.get("initial", 500)),
+            "minimum": int(m.get("minimum", 50)),
+            "decay": int(m.get("decay", 25)),
+            "type": "multi_flag",
+        })
     else:
         entries.append({
             "name": m.get("name", ""),
@@ -102,6 +104,7 @@ for fpath in manifest_files:
             "initial": int(m.get("initial", 500)),
             "minimum": int(m.get("minimum", 50)),
             "decay": int(m.get("decay", 25)),
+            "type": "dynamic",
         })
 
 for entry in entries:
@@ -125,10 +128,10 @@ for entry in entries:
                 "minimum": entry["minimum"],
                 "decay": entry["decay"],
                 "state": "visible",
-                "type": "dynamic"
+                "type": entry["type"],
             })
             cid = result["data"]["id"]
-            print(f"  ✔ Created: {name} (id={cid})")
+            print(f"  ✔ Created: {name} (id={cid}, type={entry['type']})")
             created += 1
         except Exception as e:
             print(f"  ✘ Failed to create {name}: {e}")

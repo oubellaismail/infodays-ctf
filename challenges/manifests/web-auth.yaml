@@ -1,9 +1,0 @@
-id: web-auth
-name: "Web Auth"
-category: web
-image: registry.digitalocean.com/infodays-registry/base:web
-port: 8080
-type: http
-initial: 500
-minimum: 50
-decay: 25

@@ -176,13 +176,17 @@ def create_deployment(apps_v1: Any, team_id: str, challenge: dict) -> str:
     labels = managed_labels(team_id, challenge_id)
 
     _, env_vars = _flag_env_vars(team_id, challenge)
-    all_ports = [V1ContainerPort(container_port=challenge["port"])]
+    # container_port overrides port for the pod's actual listening port when
+    # the external service port differs (e.g. sshd on 22 exposed as port 2222).
+    container_port = challenge.get("container_port", challenge["port"])
+    all_ports = [V1ContainerPort(container_port=container_port)]
     for extra in challenge.get("extra_ports", []):
         all_ports.append(V1ContainerPort(container_port=extra["port"]))
 
     container = V1Container(
         name=challenge_id,
         image=challenge["image"],
+        image_pull_policy="Always",
         ports=all_ports,
         env=env_vars,
         resources=V1ResourceRequirements(
@@ -191,10 +195,22 @@ def create_deployment(apps_v1: Any, team_id: str, challenge: dict) -> str:
         ),
         security_context=V1SecurityContext(
             allow_privilege_escalation=False,
-            capabilities=V1Capabilities(drop=["ALL"]),
-            run_as_non_root=True,
-            run_as_user=1000,
+            # run_as_root challenges need DAC_OVERRIDE + CHOWN to write system dirs as root;
+            # dropping ALL strips those even from uid 0.
+            capabilities=V1Capabilities(drop=["ALL"]) if not challenge.get("run_as_root") else None,
+            **({} if challenge.get("run_as_root") else {
+                "run_as_non_root": True,
+                "run_as_user": 1000,
+            }),
         ),
+    )
+
+    pod_security_context = V1PodSecurityContext(
+        seccomp_profile=V1SeccompProfile(type="RuntimeDefault"),
+        **({} if challenge.get("run_as_root") else {
+            "run_as_non_root": True,
+            "run_as_user": 1000,
+        }),
     )
 
     body = V1Deployment(
@@ -211,11 +227,7 @@ def create_deployment(apps_v1: Any, team_id: str, challenge: dict) -> str:
                 metadata=V1ObjectMeta(labels=labels),
                 spec=V1PodSpec(
                     containers=[container],
-                    security_context=V1PodSecurityContext(
-                        run_as_non_root=True,
-                        run_as_user=1000,
-                        seccomp_profile=V1SeccompProfile(type="RuntimeDefault"),
-                    ),
+                    security_context=pod_security_context,
                 ),
             ),
         ),
@@ -257,7 +269,7 @@ def create_service(core_v1: Any, team_id: str, challenge: dict) -> str:
         spec=V1ServiceSpec(
             type="NodePort" if challenge.get("type") in ("tcp", "http") else "ClusterIP",
             selector=labels,
-            ports=[V1ServicePort(port=challenge["port"], target_port=challenge["port"])],
+            ports=[V1ServicePort(port=challenge["port"], target_port=challenge.get("container_port", challenge["port"]))],
         ),
     )
 

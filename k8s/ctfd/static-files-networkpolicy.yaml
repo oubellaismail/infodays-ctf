@@ -1,0 +1,40 @@
+# Allow CTFd pods to fetch challenge content from the static-files-server
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ctfd-egress-static-files
+  namespace: ctfd
+spec:
+  podSelector:
+    matchLabels:
+      app: ctfd
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: static-files-server
+      ports:
+        - port: 80
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-static-files-ingress-ctfd
+  namespace: ctfd
+spec:
+  podSelector:
+    matchLabels:
+      app: static-files-server
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: ctfd
+      ports:
+        - port: 80
+          protocol: TCP

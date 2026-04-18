@@ -1,0 +1,68 @@
+id: man-city
+name: "Man City"
+category: Web
+description: "Multi-step web challenge. Eight flags hidden across the application — from low-hanging fruit to full RCE."
+initial: 2600
+minimum: 375
+decay: 20
+image: registry.digitalocean.com/infodays-registry/challenges:man-city
+port: 8080
+type: http
+memory_limit: "256Mi"
+flags:
+  - id: man-city-1
+    name: "Man City — View Source"
+    category: Web
+    env: FLAG1
+    initial: 100
+    minimum: 10
+    decay: 20
+  - id: man-city-2
+    name: "Man City — Robots"
+    category: Web
+    env: FLAG2
+    initial: 150
+    minimum: 15
+    decay: 20
+  - id: man-city-3
+    name: "Man City — Default Creds"
+    category: Web
+    env: FLAG3
+    initial: 200
+    minimum: 25
+    decay: 20
+  - id: man-city-4
+    name: "Man City — SQL Injection"
+    category: Web
+    env: FLAG4
+    initial: 300
+    minimum: 40
+    decay: 20
+  - id: man-city-5
+    name: "Man City — SSTI"
+    category: Web
+    env: FLAG5
+    initial: 400
+    minimum: 50
+    decay: 15
+  - id: man-city-6
+    name: "Man City — Path Traversal"
+    category: Web
+    env: FLAG6
+    initial: 450
+    minimum: 60
+    decay: 15
+  - id: man-city-7
+    name: "Man City — Pickle RCE"
+    category: Web
+    env: FLAG7
+    initial: 500
+    minimum: 75
+    decay: 10
+  - id: man-city-8
+    name: "Man City — JWT None + RCE"
+    category: Web
+    env: FLAG8
+    initial: 500
+    minimum: 100
+    decay: 10

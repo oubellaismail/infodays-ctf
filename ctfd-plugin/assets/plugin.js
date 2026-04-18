@@ -101,6 +101,11 @@
   var currentStatus = null;
   var refreshTimer = null;
 
+  // Multi-flag state (reset when modal opens)
+  var currentNumericId = null;
+  var isMultiFlag = false;
+  var progressPollTimer = null;
+
   // ─── CTFd API helpers ───────────────────────────────────────────────────────
 
   function getCsrfToken() {
@@ -183,33 +188,55 @@
     // null means challenge is not managed by the controller (static/file
     // download challenges). Show a download button pointing to the plugin's
     // per-team zip endpoint.
+    // For multi_flag static bundles: progress bar is already shown above —
+    // append the download button below it without clearing the container.
     if (challenge === null) {
-      container.innerHTML = "";
-      if (currentChallengeId) {
-        var dlRow = document.createElement("div");
-        dlRow.className = "ctf-controller-row";
+      if (!currentChallengeId) return;
 
-        var badge = document.createElement("span");
-        badge.className = "ctf-badge ctf-badge--download";
-        badge.textContent = "File Challenge";
-        dlRow.appendChild(badge);
-
-        var dlBtn = document.createElement("a");
-        dlBtn.href = "/download/" + currentChallengeId;
-        dlBtn.className = "btn btn-sm btn-primary";
-        dlBtn.textContent = "\u2B07 Download Challenge";
-        dlBtn.setAttribute("download", "");
-        dlRow.appendChild(dlBtn);
-
-        container.appendChild(dlRow);
+      if (isMultiFlag) {
+        // Avoid duplicating the button on repeated polls
+        if (!container.querySelector(".ctf-controller-row")) {
+          var dlRow = document.createElement("div");
+          dlRow.className = "ctf-controller-row";
+          var dlBadge = document.createElement("span");
+          dlBadge.className = "ctf-badge ctf-badge--download";
+          dlBadge.textContent = "File Challenge";
+          dlRow.appendChild(dlBadge);
+          var dlBtn = document.createElement("a");
+          dlBtn.href = "/download/" + currentChallengeId;
+          dlBtn.className = "btn btn-sm btn-primary";
+          dlBtn.textContent = "\u2B07 Download Challenge";
+          dlBtn.setAttribute("download", "");
+          dlRow.appendChild(dlBtn);
+          container.appendChild(dlRow);
+        }
+        return;
       }
+
+      container.innerHTML = "";
+      var dlRow = document.createElement("div");
+      dlRow.className = "ctf-controller-row";
+      var dlBadge = document.createElement("span");
+      dlBadge.className = "ctf-badge ctf-badge--download";
+      dlBadge.textContent = "File Challenge";
+      dlRow.appendChild(dlBadge);
+      var dlBtn = document.createElement("a");
+      dlBtn.href = "/download/" + currentChallengeId;
+      dlBtn.className = "btn btn-sm btn-primary";
+      dlBtn.textContent = "\u2B07 Download Challenge";
+      dlBtn.setAttribute("download", "");
+      dlRow.appendChild(dlBtn);
+      container.appendChild(dlRow);
       return;
     }
 
     var status = challenge.status || "fresh";
     currentStatus = status;
 
+    // Preserve multi-flag progress bar across service UI re-renders
+    var savedProgress = container.querySelector(".ctf-mf-progress");
     container.innerHTML = "";
+    if (savedProgress) container.insertBefore(savedProgress, container.firstChild);
 
     var badge = document.createElement("span");
     badge.className = "ctf-badge";
@@ -277,7 +304,9 @@
     if (!container) container = getOrCreateContainer();
     if (!container) return;
 
+    var savedProgress = container.querySelector(".ctf-mf-progress");
     container.innerHTML = "";
+    if (savedProgress) container.appendChild(savedProgress);
 
     var badge = document.createElement("span");
     badge.textContent = "Error";
@@ -412,6 +441,75 @@
     }
   }
 
+  // ─── Multi-flag progress ─────────────────────────────────────────────────────
+
+  async function fetchMultiFlagProgress(numericId) {
+    try {
+      var resp = await ctfdFetch("/api/plugin/multi-flag-progress/" + numericId);
+      if (!resp.ok) return null;
+      return await resp.json();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function renderMultiFlagProgress(progressData) {
+    if (!progressData) return;
+    var container = getOrCreateContainer();
+    if (!container) return;
+
+    var old = container.querySelector(".ctf-mf-progress");
+    if (old) old.remove();
+
+    var total = progressData.total || 0;
+    var found = progressData.found || 0;
+    var pts   = progressData.points_earned || 0;
+    var complete = progressData.complete || false;
+    var pct = total > 0 ? Math.round(found / total * 100) : 0;
+
+    var bar = document.createElement("div");
+    bar.className = "ctf-mf-progress";
+
+    var labelRow = document.createElement("div");
+    labelRow.className = "ctf-mf-label-row";
+
+    var badge = document.createElement("span");
+    badge.className = "ctf-badge " + (complete ? "ctf-badge--running" : "ctf-badge--muted");
+    badge.textContent = complete ? "\u2713 Complete" : (found + "/" + total + " flags");
+    labelRow.appendChild(badge);
+
+    var ptsSpan = document.createElement("span");
+    ptsSpan.className = "ctf-mf-pts";
+    ptsSpan.textContent = pts + " pts earned";
+    labelRow.appendChild(ptsSpan);
+
+    bar.appendChild(labelRow);
+
+    var track = document.createElement("div");
+    track.className = "ctf-mf-bar-track";
+    var fill = document.createElement("div");
+    fill.className = "ctf-mf-bar-fill" + (complete ? " ctf-mf-bar-complete" : "");
+    fill.style.width = pct + "%";
+    track.appendChild(fill);
+    bar.appendChild(track);
+
+    // Insert at the top of the container (before the service Start/Stop row)
+    container.insertBefore(bar, container.firstChild);
+  }
+
+  function startProgressPolling(numericId) {
+    if (progressPollTimer) clearInterval(progressPollTimer);
+    progressPollTimer = setInterval(async function () {
+      var progress = await fetchMultiFlagProgress(numericId);
+      renderMultiFlagProgress(progress);
+    }, 10000);
+  }
+
+  function stopProgressPolling() {
+    if (progressPollTimer) clearInterval(progressPollTimer);
+    progressPollTimer = null;
+  }
+
   // ─── Status polling ─────────────────────────────────────────────────────────
 
   async function updateUI() {
@@ -439,8 +537,11 @@
     openingId = numericId;
 
     stopPolling();
+    stopProgressPolling();
     currentChallengeId = null;
+    currentNumericId = null;
     currentStatus = null;
+    isMultiFlag = false;
 
     var old = document.getElementById("ctf-controller-ui");
     if (old) old.remove();
@@ -459,17 +560,19 @@
       return;
     }
 
+    currentNumericId = numericId;
+    isMultiFlag = info.type === "multi_flag";
+
     // Derive deployment ID from the CTFd flag's 'data' field (manifest entry ID).
-    // This handles bundle manifests where the CTFd challenge name is e.g.
-    // "Man City — View Source" but the deployment is "man-city".
-    // The flag data field is e.g. "man-city-1" → strip trailing -N → "man-city".
+    // For single-flag challenges: data = "man-city" → used as-is.
+    // For multi_flag: data = "man-city" (parent id, no stripping needed).
+    // Legacy bundle entries: data = "man-city-1" → strip -N → "man-city".
     try {
       var flagResp = await ctfdFetch("/api/v1/flags?challenge_id=" + numericId + "&per_page=1");
       if (flagResp.ok) {
         var flagData = await flagResp.json();
         var teamFlag = (flagData.data || []).find(function (f) { return f.type === "team"; });
         if (teamFlag && teamFlag.data) {
-          // Strip trailing bundle suffix (-1, -2, ...) to get deployment ID
           currentChallengeId = teamFlag.data.replace(/-\d+$/, "");
         }
       }
@@ -480,15 +583,32 @@
     }
     if (!currentChallengeId) return;
 
-    console.log("[ctf-controller] challenge opened:", currentChallengeId);
+    console.log("[ctf-controller] challenge opened:", currentChallengeId, "type:", info.type);
+
+    // Multi-flag challenges: show progress bar + service UI (if applicable)
+    if (isMultiFlag) {
+      var progress = await fetchMultiFlagProgress(numericId);
+      // Create container so progress bar has somewhere to live
+      getOrCreateContainer();
+      renderMultiFlagProgress(progress);
+      startProgressPolling(numericId);
+    }
+
+    // Fetch controller status to determine if challenge has a running service.
+    // For static (file-only) challenges, the controller returns null → renderUI(null)
+    // shows a download button (single-flag) or nothing (multi_flag, which already
+    // shows a progress bar above).
     updateUI();
     startPolling();
   }
 
   function onModalClose() {
     stopPolling();
+    stopProgressPolling();
     openingId = null;
     currentChallengeId = null;
+    currentNumericId = null;
+    isMultiFlag = false;
     var ui = document.getElementById("ctf-controller-ui");
     if (ui) ui.remove();
   }

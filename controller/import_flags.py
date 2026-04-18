@@ -106,7 +106,7 @@ def fetch_existing_flags(ctfd_url: str, admin_token: str, challenge_id: int) -> 
 
 def import_flag(ctfd_url: str, admin_token: str, challenge: dict, challenge_id_map: dict) -> str:
     """
-    Import one team-bound flag entry per challenge into CTFd.
+    Import one team-bound flag entry per single-flag challenge into CTFd.
 
     Uses the custom 'team' flag type registered by the controller-plugin.
     CTFd validates on the fly: HMAC(CTF_MASTER_SECRET, "{team_id}:{manifest_id}")[:32]
@@ -153,6 +153,54 @@ def import_flag(ctfd_url: str, admin_token: str, challenge: dict, challenge_id_m
         raise
 
 
+def register_bundle_challenge(ctfd_url: str, admin_token: str, ctfd_challenge_id: int,
+                               parent_id: str, components: list[dict]) -> str:
+    """
+    Register a multi_flag bundle challenge:
+      1. Creates ONE team flag row with data=parent_id (for plugin deployment-ID lookup)
+      2. Registers all component scoring params via the plugin endpoint
+
+    Returns: "created", "registered", or "skipped"
+    """
+    headers = {"Authorization": f"Token {admin_token}", "Content-Type": "application/json"}
+
+    # Step 1: ensure the team flag row exists (data = parent_id for deployment lookup)
+    existing_flags = fetch_existing_flags(ctfd_url, admin_token, ctfd_challenge_id)
+    if "team-derived" not in existing_flags:
+        body = {
+            "challenge_id": ctfd_challenge_id,
+            "type": "team",
+            "content": "team-derived",
+            "data": parent_id,
+        }
+        try:
+            resp = httpx.post(f"{ctfd_url}/api/v1/flags", headers=headers, json=body)
+            resp.raise_for_status()
+            logger.info(f"Created team flag for bundle: {parent_id} (ctfd_id={ctfd_challenge_id})")
+        except Exception as e:
+            logger.error(f"Failed to create team flag for bundle {parent_id}: {e}")
+            raise
+
+    # Step 2: register component scoring params
+    plugin_url = f"{ctfd_url}/api/plugin/multi-flag-register"
+    body = {
+        "challenge_id": ctfd_challenge_id,
+        "components": components,
+    }
+    try:
+        resp = httpx.post(plugin_url, headers=headers, json=body)
+        if resp.status_code == 200:
+            data = resp.json()
+            logger.info(f"Registered {len(components)} components for {parent_id}: {data.get('message', '')}")
+            return "registered"
+        else:
+            logger.warning(f"Component registration returned {resp.status_code} for {parent_id}: {resp.text}")
+            return "skipped"
+    except Exception as e:
+        logger.error(f"Failed to register components for {parent_id}: {e}")
+        raise
+
+
 def main(ctfd_url: str, admin_token: str) -> None:
     """Entry point for flag import workflow."""
     logger.info("Starting flag import (team-bound mode)...")
@@ -163,20 +211,27 @@ def main(ctfd_url: str, admin_token: str) -> None:
 
     challenge_id_map = fetch_challenges(ctfd_url, admin_token)
 
-    # Use load_flag_entries() so that bundle manifests (multi-flag challenges)
-    # are expanded into individual CTFd challenge entries. Each entry has a
-    # unique 'id' used as the 'data' field in the "team" flag type, and a
-    # 'name' used to look up the CTFd challenge ID.
-    challenges = [c for c in load_flag_entries()
-                  if c.get("category", "").lower() in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}]
-    logger.info(f"Loaded {len(challenges)} flag entries (including bundle expansions)")
+    # Split entries into single-flag and bundle groups
+    all_entries = [c for c in load_flag_entries()
+                   if c.get("category", "").lower() in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}]
+    logger.info(f"Loaded {len(all_entries)} flag entries (including bundle expansions)")
 
-    # One team flag row per challenge — no team loop needed
+    # Group bundle entries by parent_id
+    bundle_groups: dict[str, list[dict]] = {}
+    single_flag_entries: list[dict] = []
+    for entry in all_entries:
+        parent_id = entry.get("_parent_id")
+        if parent_id:
+            bundle_groups.setdefault(parent_id, []).append(entry)
+        else:
+            single_flag_entries.append(entry)
+
     created = 0
     skipped = 0
     errors = 0
 
-    for challenge in challenges:
+    # Process single-flag challenges (unchanged behavior)
+    for challenge in single_flag_entries:
         try:
             result = import_flag(ctfd_url, admin_token, challenge, challenge_id_map)
             if result == "created":
@@ -187,7 +242,36 @@ def main(ctfd_url: str, admin_token: str) -> None:
             logger.error(f"Error importing flag for {challenge['id']}: {e}")
             errors += 1
 
-    logger.info(f"Done: {created} created, {skipped} skipped, {errors} errors")
+    # Process bundle (multi_flag) challenges
+    for parent_id, entries in bundle_groups.items():
+        bundle_name = entries[0].get("_bundle_name", parent_id)
+        ctfd_challenge_id = challenge_id_map.get(bundle_name)
+        if not ctfd_challenge_id:
+            logger.warning(f"Bundle challenge not found in CTFd: '{bundle_name}' (parent: {parent_id})")
+            skipped += 1
+            continue
+        components = [
+            {
+                "component_id": e["id"],
+                "env_var": e.get("env", ""),
+                "initial": int(e.get("initial", 500)),
+                "minimum": int(e.get("minimum", 50)),
+                "decay": int(e.get("decay", 25)),
+            }
+            for e in entries
+        ]
+        try:
+            result = register_bundle_challenge(ctfd_url, admin_token, ctfd_challenge_id,
+                                               parent_id, components)
+            if result in ("created", "registered"):
+                created += 1
+            else:
+                skipped += 1
+        except Exception as e:
+            logger.error(f"Error registering bundle {parent_id}: {e}")
+            errors += 1
+
+    logger.info(f"Done: {created} created/registered, {skipped} skipped, {errors} errors")
 
 
 if __name__ == "__main__":

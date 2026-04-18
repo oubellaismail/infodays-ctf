@@ -537,3 +537,41 @@ footer,
     font-size: 1.5rem;
   }
 }
+
+/* ── Multi-flag progress bar ─────────────────────────────── */
+.ctf-mf-progress {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0;
+}
+
+.ctf-mf-label-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.ctf-mf-pts {
+  font-size: 0.75rem;
+  color: var(--ctf-badge-muted-color, #7E90AE);
+  font-variant-numeric: tabular-nums;
+}
+
+.ctf-mf-bar-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bs-border-color, #1A2538);
+  overflow: hidden;
+}
+
+.ctf-mf-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--bs-primary, #397BE9);
+  transition: width 0.4s ease;
+  min-width: 0;
+}
+
+.ctf-mf-bar-fill.ctf-mf-bar-complete {
+  background: var(--bs-success, #1A7F4E);
+}

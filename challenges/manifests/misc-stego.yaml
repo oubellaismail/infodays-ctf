@@ -1,9 +1,0 @@
-id: misc-stego
-name: "Misc Stego"
-category: misc
-image: registry.digitalocean.com/infodays-registry/base:misc
-port: 4444
-type: tcp
-initial: 500
-minimum: 50
-decay: 25

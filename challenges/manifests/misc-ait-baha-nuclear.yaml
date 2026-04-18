@@ -1,0 +1,36 @@
+id: ait-baha-nuclear
+name: "Aït Baha Nuclear"
+category: Misc
+description: "ICS/SCADA challenge. Compromise the HMI, pivot to the PLC, and trigger the interlock."
+initial: 1150
+minimum: 165
+decay: 15
+image: registry.digitalocean.com/infodays-registry/challenges:ait-baha-nuclear
+port: 8080
+type: http
+memory_limit: "256Mi"
+extra_ports:
+  - name: modbus
+    port: 5020
+flags:
+  - id: ait-baha-nuclear-1
+    name: "Aït Baha Nuclear — HMI"
+    category: Misc
+    env: FLAG1
+    initial: 250
+    minimum: 35
+    decay: 20
+  - id: ait-baha-nuclear-2
+    name: "Aït Baha Nuclear — PLC"
+    category: Misc
+    env: FLAG2
+    initial: 400
+    minimum: 55
+    decay: 15
+  - id: ait-baha-nuclear-3
+    name: "Aït Baha Nuclear — Interlock"
+    category: Misc
+    env: FLAG3
+    initial: 500
+    minimum: 75
+    decay: 10

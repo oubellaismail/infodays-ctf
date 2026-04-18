@@ -1,9 +1,0 @@
-id: forensics-log
-name: "Forensics Log"
-category: forensics
-image: registry.digitalocean.com/infodays-registry/base:forensics
-port: 8080
-type: http
-initial: 500
-minimum: 50
-decay: 25

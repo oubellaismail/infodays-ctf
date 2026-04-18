@@ -63,6 +63,8 @@ def load_flag_entries(manifest_dir: str = "challenges/manifests") -> list:
                     **flag,
                     # Back-reference to parent deployment id
                     "_parent_id": manifest["id"],
+                    # Parent challenge display name (used by import_flags.py to look up CTFd entry)
+                    "_bundle_name": manifest.get("name", manifest["id"]),
                 }
                 entries.append(entry)
         else:

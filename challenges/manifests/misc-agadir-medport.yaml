@@ -1,0 +1,33 @@
+id: agadir-medport
+name: "Agadir Medport"
+category: Misc
+description: "MQTT-based port challenge. Recon the broker, intercept traffic, and hijack the control channel."
+initial: 1050
+minimum: 155
+decay: 15
+image: registry.digitalocean.com/infodays-registry/challenges:agadir-medport
+port: 1883
+type: tcp
+run_as_root: true   # writes /etc/mosquitto/passwd, chown mosquitto files
+flags:
+  - id: agadir-medport-1
+    name: "Agadir Medport — Recon"
+    category: Misc
+    env: FLAG1
+    initial: 200
+    minimum: 30
+    decay: 20
+  - id: agadir-medport-2
+    name: "Agadir Medport — Intercept"
+    category: Misc
+    env: FLAG2
+    initial: 350
+    minimum: 50
+    decay: 15
+  - id: agadir-medport-3
+    name: "Agadir Medport — Hijack"
+    category: Misc
+    env: FLAG3
+    initial: 500
+    minimum: 75
+    decay: 10

@@ -1,0 +1,9 @@
+id: stadium-ci
+name: "Stadium CI"
+category: Web
+image: registry.digitalocean.com/infodays-registry/challenges:stadium-ci
+port: 8080
+type: http
+initial: 400
+minimum: 50
+decay: 15

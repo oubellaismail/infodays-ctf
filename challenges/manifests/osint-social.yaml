@@ -1,9 +1,0 @@
-id: osint-social
-name: "Osint Social"
-category: osint
-image: registry.digitalocean.com/infodays-registry/base:osint
-port: 4444
-type: tcp
-initial: 500
-minimum: 50
-decay: 25

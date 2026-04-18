@@ -1,0 +1,11 @@
+id: pearl-binary-signature
+name: "Pearl Binary Signature"
+category: Forensics
+image: registry.digitalocean.com/infodays-registry/challenges:pearl-binary-signature
+port: 1337
+type: tcp
+initial: 400
+minimum: 60
+decay: 15
+# Players also need the challenge image (agadir_tifo_challenge.png) — upload
+# as a CTFd file attachment manually after creating the challenge.
