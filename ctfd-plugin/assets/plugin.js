@@ -380,11 +380,18 @@
     } else if (status === "running") {
       badge.textContent = "Running";
       badge.classList.add("ctf-badge--running");
-      btn.textContent = "\u23F9 Stop Instance";
+      btn.textContent = "\u23F9 Stop";
       btn.classList.add("btn-outline-danger");
       btn.onclick = handleStop;
+
+      var restartBtn = document.createElement("button");
+      restartBtn.className = "btn btn-sm btn-outline-secondary ctf-restart-btn";
+      restartBtn.textContent = "\u21BA Restart";
+      restartBtn.onclick = handleRestart;
+
       topRow.appendChild(badge);
       topRow.appendChild(btn);
+      topRow.appendChild(restartBtn);
       container.appendChild(topRow);
 
       if (challenge && challenge.url) {
@@ -495,6 +502,30 @@
 
   // ─── Button handlers ────────────────────────────────────────────────────────
 
+  // Render a "pod is starting, waiting for readiness" state
+  function renderStarting() {
+    var container = getOrCreateContainer();
+    if (!container) return;
+    var savedProgress = container.querySelector(".ctf-mf-progress");
+    container.innerHTML = "";
+    if (savedProgress) container.insertBefore(savedProgress, container.firstChild);
+
+    var row = document.createElement("div");
+    row.className = "ctf-controller-row";
+
+    var badge = document.createElement("span");
+    badge.className = "ctf-badge ctf-badge--starting";
+    badge.textContent = "Starting\u2026";
+    row.appendChild(badge);
+
+    var note = document.createElement("span");
+    note.className = "ctf-starting-note";
+    note.textContent = "Waiting for pod to be ready\u2026";
+    row.appendChild(note);
+
+    container.appendChild(row);
+  }
+
   async function handleStart() {
     setButtonLoading(true);
     try {
@@ -515,15 +546,33 @@
         return;
       }
 
-      renderUI({
-        challenge_id: currentChallengeId,
-        status: "running",
-        url: data.url,
-      });
-      setButtonLoading(false);
-      // Update board indicators immediately
-      allInstanceStatuses[currentChallengeId] = { status: "running", url: data.url };
+      // Pod is scaling up — don't show URL yet, wait for readiness
+      renderStarting();
+      allInstanceStatuses[currentChallengeId] = { status: "running", url: null };
       updateBoardIndicators();
+
+      // Poll every 4s until controller confirms pod is ready (url available)
+      var waited = 0;
+      var MAX_WAIT = 120000; // 2 min timeout
+      var INTERVAL = 4000;
+
+      stopPolling(); // pause normal 15s poll while we fast-poll
+      var readyTimer = setInterval(async function () {
+        waited += INTERVAL;
+        var challenge = await fetchStatus();
+        if (challenge && challenge.status === "running" && challenge.url) {
+          clearInterval(readyTimer);
+          renderUI(challenge);
+          allInstanceStatuses[currentChallengeId] = challenge;
+          updateBoardIndicators();
+          startPolling(); // resume normal polling
+        } else if (waited >= MAX_WAIT) {
+          clearInterval(readyTimer);
+          showInlineWarning("Pod is taking too long to start. Try refreshing.");
+          startPolling();
+        }
+      }, INTERVAL);
+
     } catch (err) {
       console.error("[ctf-controller] start failed:", err);
       renderUnknown();
@@ -558,6 +607,55 @@
       console.error("[ctf-controller] stop failed:", err);
       renderUnknown();
       setButtonLoading(false);
+    }
+  }
+
+  async function handleRestart() {
+    // Disable both buttons immediately
+    document.querySelectorAll("#ctf-controller-ui button").forEach(function (b) { b.disabled = true; });
+    try {
+      // Deactivate first
+      var stopResp = await ctfdFetch("/controller-proxy/deactivate", {
+        method: "POST",
+        body: JSON.stringify({ team_id: TEAM_ID, challenge_id: currentChallengeId }),
+      });
+      if (!stopResp.ok) { renderUnknown(); return; }
+
+      // Brief pause so K8s scales down before we scale back up
+      await new Promise(function (r) { setTimeout(r, 1500); });
+
+      // Reactivate
+      var startResp = await ctfdFetch("/controller-proxy/activate", {
+        method: "POST",
+        body: JSON.stringify({ team_id: TEAM_ID, challenge_id: currentChallengeId }),
+      });
+      if (!startResp.ok) { renderUnknown(); return; }
+
+      // Wait for readiness (same logic as handleStart)
+      renderStarting();
+      allInstanceStatuses[currentChallengeId] = { status: "running", url: null };
+      updateBoardIndicators();
+
+      stopPolling();
+      var waited = 0;
+      var readyTimer = setInterval(async function () {
+        waited += 4000;
+        var challenge = await fetchStatus();
+        if (challenge && challenge.status === "running" && challenge.url) {
+          clearInterval(readyTimer);
+          renderUI(challenge);
+          allInstanceStatuses[currentChallengeId] = challenge;
+          updateBoardIndicators();
+          startPolling();
+        } else if (waited >= 120000) {
+          clearInterval(readyTimer);
+          showInlineWarning("Pod is taking too long to restart. Try refreshing.");
+          startPolling();
+        }
+      }, 4000);
+    } catch (err) {
+      console.error("[ctf-controller] restart failed:", err);
+      renderUnknown();
     }
   }
 
@@ -699,7 +797,14 @@
     } catch (e) { /* fall through to name-based slug */ }
 
     if (!currentChallengeId && info.name) {
-      currentChallengeId = info.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+      // Normalize unicode (ï→i, é→e, etc.) before slugifying so accented
+      // challenge names like "Aït Baha Nuclear" resolve to the correct id.
+      currentChallengeId = info.name
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9-]/g, "");
     }
     if (!currentChallengeId) return;
 
