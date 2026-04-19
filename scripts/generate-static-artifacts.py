@@ -548,12 +548,21 @@ def gen_coach_formation(team_id: int, hex8: str, out_dir: Path) -> dict:
 
 
 def gen_vip_invitation(team_id: int, hex8: str, out_dir: Path) -> dict:
-    """Uses existing player_handout.txt — flag is hardcoded (steghide not available)."""
+    """Packages player_handout.txt + pre-generated steghide jpg.
+
+    The jpg (stadium_vip_Agadir2030.jpg) is generated once via create_challenge.py
+    (requires steghide) and committed to the challenge source directory.
+    All teams receive the same jpg — the flag is static (not per-team HMAC).
+    """
     src = CHALLENGES_DIR / "forensics" / "the_vip_invitation"
     handout = (src / "player_handout.txt").read_bytes()
+    jpg = (src / "stadium_vip_Agadir2030.jpg").read_bytes()
     flag = (src / "flag.txt").read_text().strip()
     return {
-        "files": [("player_handout.txt", handout)],
+        "files": [
+            ("player_handout.txt", handout),
+            ("stadium_vip_Agadir2030.jpg", jpg),
+        ],
         "flags": [("vip-invitation", flag)],
     }
 
