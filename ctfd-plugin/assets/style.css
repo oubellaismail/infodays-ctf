@@ -222,7 +222,7 @@ code, pre, kbd, samp,
   --bs-btn-hover-color:  #e84b4b;
 }
 
-/* ── Hero / Jumbotron — fully transparent, no box ─────────── */
+/* ── Hero / Jumbotron ─────────────────────────────────────── */
 .jumbotron {
   background: transparent !important;
   border: none !important;
@@ -231,6 +231,7 @@ code, pre, kbd, samp,
   -webkit-backdrop-filter: none !important;
   position: relative;
   overflow: hidden;
+  padding-bottom: 0.5rem !important;
 }
 
 .jumbotron::before,
@@ -242,129 +243,130 @@ code, pre, kbd, samp,
 .jumbotron h2 {
   color: #fff !important;
   font-weight: 900 !important;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
-  text-shadow: 0 0 30px rgba(0,196,255,0.5), 0 2px 8px rgba(0,0,0,0.9);
+  text-shadow:
+    0 0 20px rgba(0,196,255,0.6),
+    0 0 60px rgba(0,196,255,0.2),
+    0 2px 8px rgba(0,0,0,0.9);
 }
 
 .jumbotron p {
-  color: rgba(255,255,255,0.75) !important;
+  color: rgba(255,255,255,0.7) !important;
+  letter-spacing: 0.02em;
+}
+
+/* ── Page headings (h1/h2 outside jumbotron) ─────────────── */
+h1, h2 {
+  letter-spacing: 0.04em;
+}
+
+/* Section heading — left bar + glow */
+h4, h5 {
+  color: var(--bs-body-color);
+  letter-spacing: 0.06em;
 }
 
 /* ── Challenge Cards ──────────────────────────────────────── */
 
-/* Base card */
+/* Base card — dark glass panel with left accent bar */
 .challenge-button {
-  background: rgba(5, 10, 26, 0.78) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(0,196,255,0.12) !important;
+  background: rgba(4, 9, 22, 0.82) !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(0,196,255,0.13) !important;
+  border-left: 3px solid rgba(0,196,255,0.25) !important;
   border-radius: 0 !important;
-  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.15s ease, background 0.25s;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease, background 0.2s;
   position: relative;
   overflow: hidden;
 }
 
-/* CRT scan lines — appear on hover (matches monitor scene in video) */
+/* Top-right corner notch accent */
 .challenge-button::before {
   content: "";
   position: absolute;
-  top: 0; left: 0;
-  width: 100%; height: 100%;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent 0px,
-    transparent 3px,
-    rgba(0,196,255,0.04) 3px,
-    rgba(0,196,255,0.04) 4px
-  );
-  opacity: 0;
-  transition: opacity 0.25s ease;
+  top: 0; right: 0;
+  width: 18px; height: 18px;
+  background: linear-gradient(225deg, rgba(0,196,255,0.35) 40%, transparent 40%);
   pointer-events: none;
-  z-index: 0;
+  z-index: 1;
+  transition: opacity 0.2s;
 }
 
-/* Metallic sweep line slides in from left on hover */
+/* Cyan sweep line slides in from left on hover */
 .challenge-button::after {
   content: "";
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 2px;
-  background: var(--bl-metal-sweep);
+  background: linear-gradient(90deg, transparent, #00c4ff 40%, rgba(0,196,255,0.4) 100%);
   transform: scaleX(0);
-  transition: transform 0.3s ease;
   transform-origin: left;
+  transition: transform 0.3s ease;
+  z-index: 2;
 }
 
-.challenge-button:hover::before { opacity: 1; }
-.challenge-button:hover::after  { transform: scaleX(1); }
+.challenge-button:hover::after { transform: scaleX(1); }
 
 .challenge-button:hover {
-  background: rgba(0, 25, 55, 0.88) !important;
+  background: rgba(0, 20, 48, 0.92) !important;
   border-color: rgba(0,196,255,0.55) !important;
+  border-left-color: rgba(0,196,255,0.9) !important;
   box-shadow:
-    0 0 0 1px rgba(0,196,255,0.12),
-    0 0 20px rgba(0,196,255,0.22),
-    0 0 55px rgba(0,196,255,0.07),
-    inset 0 0 25px rgba(0,196,255,0.04) !important;
+    0 0 24px rgba(0,196,255,0.18),
+    0 4px 20px rgba(0,0,0,0.5),
+    inset 0 0 20px rgba(0,196,255,0.04) !important;
   transform: translateY(-2px);
 }
 
-/* Running/Active — bold electric aura, clearly visible over video */
+/* ── Running/Active — steady cyan breath + scan line ─────── */
 .challenge-button.ctf-instance-active {
-  border: 2px solid rgba(0,196,255,0.9) !important;
-  background: rgba(0, 18, 42, 0.92) !important;
-  animation: ctf-electric-aura 2s ease-in-out infinite;
+  background: rgba(0, 14, 32, 0.95) !important;
+  border: 1px solid rgba(0,196,255,0.6) !important;
+  border-left: 3px solid #00c4ff !important;
+  animation: ctf-breath 2.8s ease-in-out infinite;
   z-index: 1;
 }
 
-/* Metallic sweep line scans across the active card */
+/* Scanning cyan line across the top */
 .challenge-button.ctf-instance-active::after {
+  background: linear-gradient(90deg, transparent, #00c4ff 45%, rgba(0,196,255,0.4) 100%);
+  transform: none;
+  animation: ctf-scan-sweep 2.8s linear infinite;
+}
+
+/* Pulsing live dot — top-right */
+.challenge-button.ctf-instance-active::before {
   content: "";
   position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 2px;
-  background: var(--bl-metal-sweep);
-  transform: none;
-  animation: ctf-scan-sweep 2s linear infinite;
+  top: 9px; right: 9px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #00c4ff;
+  box-shadow: 0 0 5px #00c4ff, 0 0 10px rgba(0,196,255,0.5);
+  animation: ctf-live-pulse 1.6s ease-in-out infinite;
+  z-index: 3;
 }
 
-/* Cyan inset glow on active card */
-.challenge-button.ctf-instance-active::before {
-  background: repeating-linear-gradient(
-    0deg,
-    transparent 0px,
-    transparent 3px,
-    rgba(0,196,255,0.06) 3px,
-    rgba(0,196,255,0.06) 4px
-  ) !important;
-  opacity: 1 !important;
+@keyframes ctf-live-pulse {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%       { opacity: 0.25; transform: scale(0.55); }
 }
 
-@keyframes ctf-electric-aura {
+/* Clean breathing glow — works well on static dark background */
+@keyframes ctf-breath {
   0%, 100% {
     box-shadow:
-      0 0 0 2px rgba(0,196,255,0.8),
-      0 0 16px rgba(0,196,255,0.5),
-      0 0 40px rgba(0,196,255,0.2),
-      inset 0 0 20px rgba(0,196,255,0.06);
+      0 0 0 1px rgba(0,196,255,0.35),
+      0 0 12px rgba(0,196,255,0.22),
+      0 0 28px rgba(0,196,255,0.08);
   }
-  30% {
+  50% {
     box-shadow:
-      0 0 0 2px rgba(0,196,255,0.3),
-      0 0 8px rgba(0,196,255,0.2);
-  }
-  60% {
-    box-shadow:
-      0 0 0 3px rgba(0,196,255,1),
-      0 0 28px rgba(0,196,255,0.7),
-      0 0 70px rgba(0,196,255,0.25),
-      inset 0 0 30px rgba(0,196,255,0.1);
-  }
-  80% {
-    box-shadow:
-      0 0 0 2px rgba(0,196,255,0.5),
-      0 0 12px rgba(0,196,255,0.3);
+      0 0 0 1px rgba(0,196,255,0.7),
+      0 0 22px rgba(0,196,255,0.45),
+      0 0 50px rgba(0,196,255,0.15);
   }
 }
 
@@ -376,36 +378,77 @@ code, pre, kbd, samp,
 }
 
 .challenge-button.ctf-instance-stopped {
-  border: 1px solid rgba(255,255,255,0.06) !important;
+  border-left-color: rgba(255,255,255,0.08) !important;
 }
 
-/* Solved — metallic halftone dots (gold-silver, trophy/achievement feel) */
+/* ── Solved — gold achievement ───────────────────────────── */
 .challenge-button.challenge-solved {
-  opacity: 0.55;
-  filter: saturate(0.3) brightness(0.72);
-  border-color: rgba(200, 165, 60, 0.35) !important;
+  opacity: 0.68;
+  border-color: rgba(255,194,0,0.2) !important;
+  border-left-color: rgba(255,194,0,0.65) !important;
+  background: rgba(10, 8, 2, 0.85) !important;
 }
 
+/* Gold corner triangle — top-right */
 .challenge-button.challenge-solved::before {
-  background:
-    radial-gradient(circle, rgba(255,194,0,0.22) 1px, transparent 1px),
-    linear-gradient(135deg, rgba(255,194,0,0.04) 0%, rgba(224,224,224,0.04) 100%) !important;
-  background-size: 6px 6px, 100% 100% !important;
-  opacity: 1 !important;
-  transition: none;
+  content: "";
+  position: absolute;
+  top: 0; right: 0;
+  width: 20px; height: 20px;
+  background: linear-gradient(225deg, rgba(255,194,0,0.55) 42%, transparent 42%);
+  pointer-events: none;
+  z-index: 2;
 }
 
-/* Category headers — manga chapter label with metallic left border */
+/* Gold shimmer line at top */
+.challenge-button.challenge-solved::after {
+  background: linear-gradient(90deg, transparent, rgba(255,194,0,0.5) 45%, transparent 100%);
+  transform: scaleX(1);
+  opacity: 1;
+  transition: none;
+  animation: none;
+}
+
+.challenge-button.challenge-solved:hover {
+  opacity: 0.85;
+  border-color: rgba(255,194,0,0.4) !important;
+  border-left-color: rgba(255,194,0,0.9) !important;
+  box-shadow: 0 0 18px rgba(255,194,0,0.1), 0 4px 16px rgba(0,0,0,0.5) !important;
+  transform: translateY(-1px);
+}
+
+/* ── Category headers ─────────────────────────────────────── */
+.category-header {
+  position: relative;
+  margin-bottom: 1.2rem !important;
+}
+
 .category-header h3 {
   font-weight: 900 !important;
-  font-size: 0.8rem !important;
-  letter-spacing: 0.35em !important;
+  font-size: 0.72rem !important;
+  letter-spacing: 0.42em !important;
   text-transform: uppercase !important;
-  color: var(--bs-primary) !important;
-  border-left: 3px solid transparent;
-  border-image: linear-gradient(180deg, #ffc200, #e0e0e0) 1;
-  padding-left: 0.6rem;
-  margin-bottom: 1rem !important;
+  /* Metallic gradient text */
+  background: linear-gradient(90deg, #00c4ff 0%, #7ee8ff 60%, rgba(0,196,255,0.5) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0 !important;
+  padding: 0.35rem 0.6rem 0.35rem 0.75rem;
+  border-left: 3px solid #00c4ff;
+  position: relative;
+}
+
+/* Extending line after the label */
+.category-header::after {
+  content: "";
+  display: block;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(0,196,255,0.4) 0%, rgba(0,196,255,0.08) 40%, transparent 100%);
+  margin-top: 0.55rem;
 }
 
 /* ── Page containers — transparent ───────────────────────── */
