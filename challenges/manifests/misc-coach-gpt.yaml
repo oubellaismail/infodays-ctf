@@ -12,14 +12,14 @@ flags:
   - id: coach-gpt-1
     name: "Coach GPT — Jailbreak"
     category: Misc
-    env: FLAG1
+    env: FLAG_MID
     initial: 200
     minimum: 30
     decay: 20
   - id: coach-gpt-2
     name: "Coach GPT — Exfil"
     category: Misc
-    env: FLAG2
+    env: FLAG_HARD
     initial: 400
     minimum: 60
     decay: 15
