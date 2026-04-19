@@ -1,0 +1,9 @@
+FROM ctfd/ctfd:latest
+USER root
+COPY ctfd-plugin/assets/bg-3.jpg \
+     ctfd-plugin/assets/goal-clip.mp4 \
+     /opt/CTFd/CTFd/plugins/controller-plugin/assets/
+RUN chmod 644 \
+    /opt/CTFd/CTFd/plugins/controller-plugin/assets/bg-3.jpg \
+    /opt/CTFd/CTFd/plugins/controller-plugin/assets/goal-clip.mp4
+USER 1000

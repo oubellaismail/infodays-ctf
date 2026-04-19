@@ -10,9 +10,128 @@
 
 (function () {
 
+  // ─── Flag submission intercept — GOAL! overlay ───────────────────────────
+  // Must run before any auth check so it catches all flag submissions.
+
+  // ── GOAL! overlay — video stays permanently in DOM to avoid re-init lag ─────
+  // Moving a <video> element in the DOM forces the browser to re-initialize its
+  // renderer, causing a blank flash. We keep both the video and the text layer
+  // fixed in place at all times and just toggle their visibility.
+
+  var GOAL_CLIP_URL = "/plugins/controller-plugin/assets/goal-clip.mp4";
+
+  // Video layer — fixed, always in DOM, invisible until triggered
+  var _goalVid = document.createElement("video");
+  _goalVid.id = "ctf-goal-vid";
+  _goalVid.src = GOAL_CLIP_URL;
+  _goalVid.preload = "auto";
+  _goalVid.muted = true;
+  _goalVid.playsInline = true;
+  _goalVid.setAttribute("playsinline", "");
+  document.body.appendChild(_goalVid);
+
+  // Text/overlay layer — fixed, always in DOM, invisible until triggered
+  var _goalOverlay = document.createElement("div");
+  _goalOverlay.id = "ctf-goal-overlay";
+  _goalOverlay.innerHTML =
+    '<div class="ctf-goal-inner">' +
+      '<div class="ctf-goal-lines"></div>' +
+      '<div class="ctf-goal-text">G O A L !</div>' +
+      '<div class="ctf-goal-sub">FLAG CAPTURED</div>' +
+    '</div>';
+  document.body.appendChild(_goalOverlay);
+
+  var _goalActive = false;
+  var _goalDismissTimer = null;
+
+  function showGoalOverlay() {
+    if (_goalActive) return;
+    _goalActive = true;
+
+    _goalVid.currentTime = 0;
+    _goalVid.play();
+
+    _goalVid.classList.add("ctf-goal-visible");
+    _goalOverlay.classList.remove("ctf-goal-fade");
+    _goalOverlay.classList.add("ctf-goal-visible");
+
+    function dismiss() {
+      if (!_goalActive) return;
+      _goalOverlay.classList.add("ctf-goal-fade");
+      setTimeout(function () {
+        _goalOverlay.classList.remove("ctf-goal-visible", "ctf-goal-fade");
+        _goalVid.classList.remove("ctf-goal-visible");
+        _goalVid.pause();
+        _goalActive = false;
+      }, 500);
+    }
+
+    _goalOverlay.onclick = dismiss;
+    _goalVid.addEventListener("ended", dismiss, { once: true });
+    if (_goalDismissTimer) clearTimeout(_goalDismissTimer);
+    _goalDismissTimer = setTimeout(dismiss, 4500);
+  }
+
+  // ── MutationObserver — watches for CTFd success alert in the modal ──────────
+  // The alert lives inside <template x-if="response"> so Alpine.js INSERTS a
+  // brand new <div class="alert alert-success"> into the DOM on flag submit.
+  // We must watch childList (new nodes), not just attribute changes.
+  (function observeFlagSuccess() {
+    var lastTrigger = 0;
+
+    function checkForSuccess(el) {
+      if (!el || !el.classList) return false;
+      if (el.classList.contains("alert-success") || el.classList.contains("alert-info")) {
+        var now = Date.now();
+        if (now - lastTrigger < 2000) return false;
+        lastTrigger = now;
+        showGoalOverlay();
+        return true;
+      }
+      return false;
+    }
+
+    function onMutation(mutations) {
+      for (var i = 0; i < mutations.length; i++) {
+        var m = mutations[i];
+        // Primary path: Alpine x-if inserts a new element node
+        if (m.type === "childList") {
+          for (var j = 0; j < m.addedNodes.length; j++) {
+            var node = m.addedNodes[j];
+            if (node.nodeType !== 1) continue;
+            if (checkForSuccess(node)) return;
+            if (node.querySelectorAll) {
+              var hits = node.querySelectorAll(".alert-success, .alert-info");
+              for (var k = 0; k < hits.length; k++) {
+                if (checkForSuccess(hits[k])) return;
+              }
+            }
+          }
+        }
+        // Fallback: attribute mutation on existing element
+        if (m.type === "attributes" && checkForSuccess(m.target)) return;
+      }
+    }
+
+    var observer = new MutationObserver(onMutation);
+    observer.observe(document.body, {
+      subtree: true,
+      childList: true,       // catch Alpine x-if insertions
+      attributes: true,
+      attributeFilter: ["class"]
+    });
+  })();
+
   // ─── Logo injection (runs for ALL visitors, including unauthenticated) ─────
 
   var LOGO_URL = "/plugins/controller-plugin/assets/logo-dark.png";
+
+  function injectBackground() {
+    if (document.getElementById("ctf-bg")) return;
+    var el = document.createElement("div");
+    el.id = "ctf-bg";
+    document.body.insertBefore(el, document.body.firstChild);
+  }
 
   function injectLogo() {
     var brand = document.querySelector(".navbar-brand");
@@ -64,6 +183,7 @@
 
   function initLogo() {
     forceDarkMode();
+    injectBackground();
     injectLogo();
     injectRulesLink();
   }

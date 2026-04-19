@@ -28,7 +28,7 @@ spec:
           type: RuntimeDefault
       containers:
       - name: ctfd
-        image: ctfd/ctfd:latest
+        image: registry.digitalocean.com/infodays-registry/ctfd:branded
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
