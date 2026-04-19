@@ -285,13 +285,18 @@
     container.setAttribute("role", "status");
     container.setAttribute("aria-live", "polite");
 
-    // Insert before challenge description in the modal
-    var descEl =
-      document.querySelector(".challenge-desc") ||
-      document.querySelector(".modal-body");
+    // Insert AFTER challenge description, BEFORE the flag submit row
+    // Flow: read challenge → start instance → get URL → submit flag
+    var submitRow = document.querySelector(".submit-row");
+    var descEl    = document.querySelector(".challenge-desc");
+    var modalBody = document.querySelector(".modal-body");
 
-    if (descEl) {
-      descEl.parentNode.insertBefore(container, descEl);
+    if (submitRow) {
+      submitRow.parentNode.insertBefore(container, submitRow);
+    } else if (descEl) {
+      descEl.parentNode.insertBefore(container, descEl.nextSibling);
+    } else if (modalBody) {
+      modalBody.appendChild(container);
     }
     return container;
   }
@@ -353,75 +358,88 @@
     var status = challenge.status || "fresh";
     currentStatus = status;
 
-    // Preserve multi-flag progress bar across service UI re-renders
+    // Preserve multi-flag progress bar across re-renders
     var savedProgress = container.querySelector(".ctf-mf-progress");
     container.innerHTML = "";
     if (savedProgress) container.insertBefore(savedProgress, container.firstChild);
 
-    var badge = document.createElement("span");
-    badge.className = "ctf-badge";
-
-    var btn = document.createElement("button");
-    btn.className = "btn btn-sm";
-
-    // Top row: badge + action button
-    var topRow = document.createElement("div");
-    topRow.className = "ctf-controller-row";
-
     if (status === "fresh" || status === "suspended") {
+      // ── Idle state: full-width Start button ───────────────
+      var idleRow = document.createElement("div");
+      idleRow.className = "ctf-action-row";
+
+      var badge = document.createElement("span");
+      badge.className = "ctf-badge " + (status === "fresh" ? "ctf-badge--fresh" : "ctf-badge--suspended");
       badge.textContent = status === "fresh" ? "Not Started" : "Stopped";
-      badge.classList.add(status === "fresh" ? "ctf-badge--fresh" : "ctf-badge--suspended");
-      btn.textContent = "\u25B6 Start Instance";
-      btn.classList.add("btn-primary");
-      btn.onclick = handleStart;
-      topRow.appendChild(badge);
-      topRow.appendChild(btn);
-      container.appendChild(topRow);
+
+      var startBtn = document.createElement("button");
+      startBtn.className = "btn btn-sm btn-primary ctf-start-btn";
+      startBtn.innerHTML = "<span class='ctf-btn-icon'>\u25B6</span> Start Instance";
+      startBtn.onclick = handleStart;
+
+      idleRow.appendChild(badge);
+      idleRow.appendChild(startBtn);
+      container.appendChild(idleRow);
+
     } else if (status === "running") {
-      badge.textContent = "Running";
-      badge.classList.add("ctf-badge--running");
-      btn.textContent = "\u23F9 Stop";
-      btn.classList.add("btn-outline-danger");
-      btn.onclick = handleStop;
-
-      var restartBtn = document.createElement("button");
-      restartBtn.className = "btn btn-sm btn-outline-secondary ctf-restart-btn";
-      restartBtn.textContent = "\u21BA Restart";
-      restartBtn.onclick = handleRestart;
-
-      topRow.appendChild(badge);
-      topRow.appendChild(btn);
-      topRow.appendChild(restartBtn);
-      container.appendChild(topRow);
+      // ── Running state: URL hero block + quiet action buttons ──
 
       if (challenge && challenge.url) {
-        // Connection row: label + copyable value
-        var connRow = document.createElement("div");
-        connRow.className = "ctf-controller-conn";
-
-        var label = document.createElement("span");
-        label.className = "ctf-conn-label";
+        // URL is the hero — big, prominent, easy to click/copy
+        var urlBlock = document.createElement("div");
+        urlBlock.className = "ctf-url-block";
 
         if (challenge.url.startsWith("nc ")) {
-          label.textContent = "Connect";
+          var ncLabel = document.createElement("span");
+          ncLabel.className = "ctf-url-label";
+          ncLabel.textContent = "CONNECT";
           var code = document.createElement("code");
-          code.textContent = challenge.url;
           code.className = "ctf-nc-command";
-          connRow.appendChild(label);
-          connRow.appendChild(code);
+          code.textContent = challenge.url;
+          urlBlock.appendChild(ncLabel);
+          urlBlock.appendChild(code);
         } else {
-          label.textContent = "Open";
+          var httpLabel = document.createElement("span");
+          httpLabel.className = "ctf-url-label";
+          httpLabel.textContent = "OPEN";
           var urlLink = document.createElement("a");
           urlLink.href = challenge.url;
           urlLink.target = "_blank";
           urlLink.rel = "noopener noreferrer";
-          urlLink.textContent = challenge.url;
           urlLink.className = "ctf-instance-url";
-          connRow.appendChild(label);
-          connRow.appendChild(urlLink);
+          urlLink.textContent = challenge.url;
+          urlBlock.appendChild(httpLabel);
+          urlBlock.appendChild(urlLink);
         }
-        container.appendChild(connRow);
+        container.appendChild(urlBlock);
       }
+
+      // Action row: status dot + quiet Stop + Restart
+      var actionRow = document.createElement("div");
+      actionRow.className = "ctf-action-row ctf-action-row--running";
+
+      var runningDot = document.createElement("span");
+      runningDot.className = "ctf-running-dot";
+      var runningLabel = document.createElement("span");
+      runningLabel.className = "ctf-running-label";
+      runningLabel.textContent = "Instance running";
+
+      var stopBtn = document.createElement("button");
+      stopBtn.className = "btn btn-sm ctf-stop-btn";
+      stopBtn.innerHTML = "\u23F9 Stop";
+      stopBtn.onclick = handleStop;
+
+      var restartBtn = document.createElement("button");
+      restartBtn.className = "btn btn-sm ctf-restart-btn";
+      restartBtn.innerHTML = "\u21BA Restart";
+      restartBtn.onclick = handleRestart;
+
+      actionRow.appendChild(runningDot);
+      actionRow.appendChild(runningLabel);
+      actionRow.appendChild(stopBtn);
+      actionRow.appendChild(restartBtn);
+      container.appendChild(actionRow);
+
     } else {
       renderUnknown(container);
     }

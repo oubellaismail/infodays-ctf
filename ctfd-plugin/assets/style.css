@@ -608,48 +608,108 @@ footer, .footer {
   vertical-align: middle;
 }
 
+/* ── Controller UI — sits between description and flag input ─ */
 .ctf-controller-ui {
-  margin-bottom: 16px;
-  padding: 12px 14px;
-  border: 1px solid rgba(0,196,255,0.2);
-  border-left: 3px solid var(--bs-primary);
-  border-radius: 2px;
-  background: rgba(255,255,255,0.03);
+  margin: 16px 0;
+  border-top: 1px solid rgba(0,196,255,0.12);
+  border-bottom: 1px solid rgba(0,196,255,0.12);
+  padding: 14px 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.ctf-controller-row {
-  display: flex;
-  align-items: center;
   gap: 12px;
 }
 
-.ctf-controller-ui .btn {
-  min-height: 34px;
-  min-width: 44px;
-  font-size: 12px;
-  padding: 5px 14px;
-  border-radius: 2px;
-}
-
-.ctf-controller-conn {
+/* Action row — badge + buttons */
+.ctf-action-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
-  background: rgba(0,0,0,0.4);
-  border-radius: 2px;
-  border: 1px solid rgba(0,196,255,0.12);
+  gap: 10px;
 }
 
-.ctf-conn-label {
-  font-size: 10px;
-  font-weight: 700;
+/* Running state action row — pushed to right */
+.ctf-action-row--running {
+  justify-content: flex-end;
+}
+
+/* Running dot + label */
+.ctf-running-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #00c4ff;
+  box-shadow: 0 0 5px #00c4ff;
+  animation: ctf-live-pulse 1.6s ease-in-out infinite;
+  flex-shrink: 0;
+}
+.ctf-running-label {
+  font-size: 11px;
+  color: var(--bs-secondary-color);
+  flex: 1;
+  letter-spacing: 0.04em;
+}
+
+/* Start — full weight, primary */
+.ctf-start-btn {
+  border-radius: 0 !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.06em !important;
+  padding: 6px 20px !important;
+}
+.ctf-btn-icon { margin-right: 4px; }
+
+/* Stop — quiet danger outline */
+.ctf-stop-btn {
+  border-radius: 0 !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  padding: 4px 12px !important;
+  color: rgba(220,80,80,0.8) !important;
+  border: 1px solid rgba(204,17,34,0.35) !important;
+  background: transparent !important;
+  transition: color 0.18s, border-color 0.18s, background 0.18s !important;
+}
+.ctf-stop-btn:hover {
+  color: #e84b4b !important;
+  border-color: rgba(204,17,34,0.7) !important;
+  background: rgba(204,17,34,0.08) !important;
+}
+
+/* Restart — very quiet, gold accent on hover */
+.ctf-restart-btn {
+  border-radius: 0 !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  padding: 4px 12px !important;
+  color: rgba(160,160,160,0.7) !important;
+  border: 1px solid rgba(255,255,255,0.1) !important;
+  background: transparent !important;
+  transition: color 0.18s, border-color 0.18s, background 0.18s !important;
+}
+.ctf-restart-btn:hover {
+  color: #ffc200 !important;
+  border-color: rgba(255,194,0,0.4) !important;
+  background: rgba(255,194,0,0.06) !important;
+}
+
+/* URL hero block — stands out as the key thing to act on */
+.ctf-url-block {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(0,196,255,0.05);
+  border: 1px solid rgba(0,196,255,0.25);
+  border-left: 3px solid #00c4ff;
+  border-radius: 0;
+}
+
+.ctf-url-label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: #00c4ff;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--bs-primary);
   flex-shrink: 0;
 }
 
@@ -713,9 +773,6 @@ footer, .footer {
 }
 
 .ctf-nc-command {
-  padding: 2px 6px;
-  background: transparent;
-  border-radius: 2px;
   font-size: 13px;
   user-select: all;
   cursor: text;
@@ -723,19 +780,25 @@ footer, .footer {
   overflow-x: auto;
   word-break: break-all;
   color: var(--bs-body-color);
+  background: transparent;
+  padding: 0;
 }
 
 .ctf-instance-url {
   font-size: 13px;
+  font-weight: 600;
   word-break: break-all;
   min-width: 0;
-  color: var(--bs-primary) !important;
+  color: #00c4ff !important;
   text-decoration: none;
+  letter-spacing: 0.01em;
+}
+.ctf-instance-url:hover {
+  text-decoration: underline;
+  color: #33d0ff !important;
 }
 
-.ctf-instance-url:hover { text-decoration: underline; }
-
-.ctf-retry-link { margin-left: 8px; }
+.ctf-retry-link { font-size: 12px; color: var(--bs-secondary-color); }
 
 /* Inline warning */
 .ctf-inline-warning {
@@ -772,10 +835,9 @@ footer, .footer {
 
 /* ── Responsive ──────────────────────────────────────────── */
 @media (max-width: 576px) {
-  .ctf-controller-row { flex-wrap: wrap; }
-  .ctf-controller-ui .btn { flex: 1 1 100%; }
-  .ctf-controller-conn { flex-direction: column; align-items: flex-start; }
-  .ctf-retry-link { margin-left: 0; }
+  .ctf-action-row { flex-wrap: wrap; }
+  .ctf-start-btn { flex: 1 1 100%; }
+  .ctf-url-block { flex-direction: column; align-items: flex-start; }
   .jumbotron h1 { font-size: 1.4rem; }
 }
 
