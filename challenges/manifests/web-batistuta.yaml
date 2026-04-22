@@ -1,0 +1,30 @@
+id: web-batistuta
+name: "Web Batistuta"
+category: web
+image: registry.digitalocean.com/infodays-registry/challenges:batistuta
+port: 8080
+type: http
+description: |
+  Monitoring + wiki + n8n-style webhook. Chain: bypass the client-side
+  /monitoring login (no server check), scrape the webhook UUID from
+  /status/temp, pull the HMAC secret out of the "exported flow" on
+  /wiki/n8n, then send an HMAC-signed JSON payload to /webhook/<uuid>
+  that error-echoes a stacked SQLi. Stage the restic backup password
+  out, open the 7z, feed the pwgen result into /vault/batistuta.
+
+  Anti-AI: every /webhook/<uuid> POST is gated by a stateless 16-bit
+  SHA-256 PoW (X-PoW-Nonce header) bound to the webhook UUID. Every
+  blind-SQLi probe pays real CPU. Parameters advertised on GET /wiki/n8n.
+flags:
+  - id: batistuta-user
+    name: "Web Batistuta — User"
+    env: FLAG1
+    initial: 400
+    minimum: 60
+    decay: 15
+  - id: batistuta-root
+    name: "Web Batistuta — Root"
+    env: FLAG2
+    initial: 600
+    minimum: 90
+    decay: 10

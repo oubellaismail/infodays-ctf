@@ -1,0 +1,16 @@
+id: reversing-general-mbappe
+name: "Reversing General Mbappe"
+category: reversing
+type: static
+description: |
+  Le general Mbappe has been tampering with low-level things again. He
+  wrote his own kitchen ISA, then built a tiny `cook` that reads a
+  `recipe` written in it — an obvious AES-256 derivation chain stuffed
+  into a custom virtual machine. Decrypt the recipe, find the kitchen
+  pass le general is guarding, and claim the flag.
+
+  Anti-AI: the 32-byte permutation the recipe uses is NOT in the text
+  file or the binary. Find it.
+initial: 600
+minimum: 80
+decay: 12

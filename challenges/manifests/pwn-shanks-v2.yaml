@@ -1,0 +1,18 @@
+id: pwn-shanks-v2
+name: "Pwn Shanks V2"
+category: pwn
+image: registry.digitalocean.com/infodays-registry/challenges:shanks-v2
+port: 1337
+type: tcp
+description: |
+  The Red Force harbor gate. Forking socket server with a custom
+  PW01/CAP1 wire framing; every connection must solve a 16-bit
+  SHA-256 proof-of-work before the captain prompt is exposed.
+
+  Bug: 1032-byte stack buffer, attacker-supplied frame length gates
+  the read() up to 0x440 — 24-byte overflow across canary, saved
+  rbp, and return address. Classic fork-survival oracle for the
+  byte-by-byte leak, but now every probe pays PoW cost.
+initial: 800
+minimum: 150
+decay: 8

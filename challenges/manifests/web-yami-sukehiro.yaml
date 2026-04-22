@@ -1,0 +1,29 @@
+id: web-yami-sukehiro
+name: "Web Yami Sukehiro"
+category: web
+image: registry.digitalocean.com/infodays-registry/challenges:yami-sukehiro
+port: 8080
+type: http
+description: |
+  Black Bulls mana-session booking app. Stateful /reminder -> /export
+  directory traversal feeds source disclosure; weak-RSA JWT lets you
+  forge a captain cookie; captain-dash order-by SQLi with MULTI_STATEMENTS
+  drops a fixer script for the cron simulator; Mercurial history hides
+  the CAPTAIN_SECRET that decrypts the root flag.
+
+  Anti-AI: /login POST is gated by a stateless 16-bit SHA-256 PoW
+  (X-PoW-Nonce header). Parameters advertised via X-PoW-* headers on
+  GET /login.
+flags:
+  - id: yami-sukehiro-user
+    name: "Web Yami Sukehiro — User"
+    env: FLAG1
+    initial: 400
+    minimum: 60
+    decay: 15
+  - id: yami-sukehiro-root
+    name: "Web Yami Sukehiro — Root"
+    env: FLAG2
+    initial: 600
+    minimum: 90
+    decay: 10
