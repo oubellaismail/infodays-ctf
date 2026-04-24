@@ -10,6 +10,7 @@ Each CSV row represents one player. Rows are grouped by team_name:
   - The first player listed for each team becomes captain
 
 CSV columns required: team_name, player_name, email, password
+Optional column:      affiliation  (sets the team's affiliation/school field)
 
 Credentials are read from environment variables (auto-set by setup-ctfd.sh)
 or passed as CLI arguments. Environment takes priority over CLI args.
@@ -109,6 +110,7 @@ def main():
                 print(f"ERROR: CSV is empty: {args.csv_file}", file=sys.stderr)
                 return 2
             missing = {"team_name", "player_name", "email", "password"} - set(reader.fieldnames)
+            has_affiliation = "affiliation" in (reader.fieldnames or [])
             if missing:
                 print(f"ERROR: CSV missing columns: {missing}", file=sys.stderr)
                 return 2
@@ -228,11 +230,15 @@ def main():
         else:
             # Create team using first member's email as team email
             try:
-                r = api(session, "POST", f"{base}/api/v1/teams", json={
-                    "name": team_name,
-                    "email": first_member["email"].strip(),
+                team_payload = {
+                    "name":     team_name,
+                    "email":    first_member["email"].strip(),
                     "password": first_member["password"].strip(),
-                })
+                }
+                affiliation = first_member.get("affiliation", "").strip() if has_affiliation else ""
+                if affiliation:
+                    team_payload["affiliation"] = affiliation
+                r = api(session, "POST", f"{base}/api/v1/teams", json=team_payload)
                 if r.status_code not in (200, 201):
                     errs = r.json().get("errors", r.text)
                     print(f"{team_label} — FAILED (team creation: {errs})")
