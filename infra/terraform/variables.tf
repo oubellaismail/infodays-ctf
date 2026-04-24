@@ -47,14 +47,20 @@ variable "node_size" {
 
 variable "node_min" {
   type        = number
-  default     = 3
-  description = "Minimum nodes in autoscaling pool (scales down during quiet periods)"
+  default     = 5
+  description = "Minimum nodes in autoscaling pool (event-safe baseline for the CTF platform)"
 }
 
 variable "node_max" {
   type        = number
   default     = 8
   description = "Maximum nodes in autoscaling pool (scales up for event peak / surprise load)"
+}
+
+variable "challenge_nodeport_source_addresses" {
+  type        = list(string)
+  default     = []
+  description = "IPv4/IPv6 CIDRs allowed to reach challenge NodePorts. Empty disables direct public NodePort access."
 }
 
 variable "registry_name" {
