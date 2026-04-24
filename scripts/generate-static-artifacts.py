@@ -569,58 +569,13 @@ def gen_vip_invitation(team_id: int, hex8: str, out_dir: Path) -> dict:
 
 def gen_legends_gate(team_id: int, hex8: str, out_dir: Path) -> dict:
     """
-    Compile per-team binary with HMAC-derived flag XOR-encoded into the ELF.
-    The password "L45_L3y3nd45!" stays the same — players reverse it to unlock the flag.
+    Static challenge — same pre-compiled binary for all teams.
+    Flag is hardcoded in the binary: INFODAYS{RE_15_NOT_GU3551NG_2026}
+    Players reverse-engineer the binary to extract it.
     """
-    import hmac as _hmac_mod, hashlib, re
-
     src = CHALLENGES_DIR / "reversing" / "legends_gate"
-    c_source = (src / "las_leyendas_final.c").read_text()
-
-    # Derive per-team HMAC flag (same formula as derive_flag() in controller/flag.py)
-    master_secret = os.environ.get("CTF_MASTER_SECRET", "")
-    msg = f"{team_id}:legends-gate".encode()
-    digest = _hmac_mod.new(master_secret.encode(), msg, hashlib.sha256).hexdigest()[:32]
-    flag = f"infodays{{{digest}}}"   # 42 chars: infodays{ + 32 hex + }
-
-    # XOR-encode with key 0x22 (matching decrypt_print in the binary)
-    flag_bytes = [b ^ 0x22 for b in flag.encode()]
-    flag_len = len(flag_bytes)
-    hex_list = ", ".join(f"0x{b:02x}" for b in flag_bytes)
-
-    # Replace flag array in C source (matches the exact multi-line block)
-    c_source = re.sub(
-        r'// "INFODAYS\{[^}]*\}".*?\n(\s*)unsigned char flag\[\] = \{[^}]*\};',
-        (f'// "{flag}" (Length: {flag_len})\n'
-         r'\g<1>' + f'unsigned char flag[] = {{\n'
-         r'\g<1>' + f'    {hex_list}\n'
-         r'\g<1>' + '};'),
-        c_source,
-        flags=re.DOTALL,
-    )
-
-    # Update the decrypt_print length argument
-    c_source = re.sub(
-        r'decrypt_print\(flag,\s*\d+\)',
-        f'decrypt_print(flag, {flag_len})',
-        c_source,
-    )
-
-    # Compile to a temp binary — use Docker for Linux cross-compilation
-    # (source uses ptrace which is Linux-only, so native gcc on macOS won't work)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp = Path(tmpdir)
-        (tmp / "legends_gate.c").write_text(c_source)
-        run([
-            "docker", "run", "--rm",
-            "-v", f"{tmp}:/work",
-            "-w", "/work",
-            "gcc:latest",
-            "gcc", "-O2", "-static", "-o", "legend_gate_pro", "legends_gate.c",
-        ])
-        out_bin = tmp / "legend_gate_pro"
-        binary = out_bin.read_bytes()
-
+    binary = (src / "legend_gate_pro").read_bytes()
+    flag = "INFODAYS{RE_15_NOT_GU3551NG_2026}"
     return {
         "files": [("legend_gate_pro", binary)],
         "flags": [("legends-gate", flag)],
@@ -723,7 +678,7 @@ def register_exact_flag(ctfd_url: str, token: str, challenge_id: int,
     """Register an exact flag in CTFd for a specific team."""
     ctfd_post(ctfd_url, token, "/api/v1/flags", {
         "challenge_id": challenge_id,
-        "type": "exact",
+        "type": "static",
         "content": flag_value,
         "data": str(team_id),  # store team_id for reference
     })
@@ -760,6 +715,7 @@ GENERATORS = {
     "coach-formation":      gen_coach_formation,
     "vip-invitation":       gen_vip_invitation,
     "venue-recon":          gen_venue_recon,
+    "legends-gate":         gen_legends_gate,
 }
 
 
