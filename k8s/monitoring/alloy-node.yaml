@@ -1,0 +1,238 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy-node
+  namespace: monitoring
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy-node
+rules:
+- apiGroups: [""]
+  resources: ["pods", "namespaces"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy-node
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy-node
+subjects:
+- kind: ServiceAccount
+  name: alloy-node
+  namespace: monitoring
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-node-config
+  namespace: monitoring
+data:
+  config.alloy: |
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    loki.write "default" {
+      endpoint {
+        url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+      }
+    }
+
+    loki.write "grafana_cloud" {
+      endpoint {
+        url = sys.env("GRAFANA_CLOUD_LOKI_URL")
+
+        basic_auth {
+          username = sys.env("GRAFANA_CLOUD_LOKI_USERNAME")
+          password = sys.env("GRAFANA_CLOUD_LOKI_TOKEN")
+        }
+      }
+    }
+
+    local.file_match "pod_logs" {
+      path_targets = [{
+        __path__  = "/var/log/containers/*.log",
+        job       = "kubernetes/pods",
+        node_name = sys.env("NODE_NAME"),
+      }]
+    }
+
+    discovery.relabel "pod_logs" {
+      targets = local.file_match.pod_logs.targets
+
+      rule {
+        source_labels = ["__path__"]
+        regex         = ".*/([^_]+)_([^_]+)_(.+)-[^-]+\\.log"
+        replacement   = "$1"
+        target_label  = "pod"
+      }
+
+      rule {
+        source_labels = ["__path__"]
+        regex         = ".*/([^_]+)_([^_]+)_(.+)-[^-]+\\.log"
+        replacement   = "$2"
+        target_label  = "namespace"
+      }
+
+      rule {
+        source_labels = ["__path__"]
+        regex         = ".*/([^_]+)_([^_]+)_(.+)-[^-]+\\.log"
+        replacement   = "$3"
+        target_label  = "container"
+      }
+    }
+
+    loki.process "pod_logs" {
+      stage.static_labels {
+        values = {
+          cluster = "infodays-ctf",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver, loki.write.grafana_cloud.receiver]
+    }
+
+    loki.source.file "pod_logs" {
+      targets    = discovery.relabel.pod_logs.output
+      forward_to = [loki.process.pod_logs.receiver]
+    }
+
+    local.file_match "node_logs" {
+      path_targets = [{
+        __path__  = "/var/log/host-syslog",
+        job       = "node/syslog",
+        node_name = sys.env("NODE_NAME"),
+      }]
+    }
+
+    loki.process "node_logs" {
+      stage.static_labels {
+        values = {
+          cluster = "infodays-ctf",
+        }
+      }
+
+      forward_to = [loki.write.default.receiver, loki.write.grafana_cloud.receiver]
+    }
+
+    loki.source.file "node_logs" {
+      targets    = local.file_match.node_logs.targets
+      forward_to = [loki.process.node_logs.receiver]
+    }
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy-node
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: alloy-node
+  template:
+    metadata:
+      labels:
+        app: alloy-node
+    spec:
+      serviceAccountName: alloy-node
+      securityContext:
+        runAsNonRoot: false
+        runAsUser: 0
+        runAsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: alloy
+        image: grafana/alloy@sha256:1f40cf52adda8fab3e058f9347a5d165624ecb9fbc1527769cb744748961940d
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: GRAFANA_CLOUD_LOKI_URL
+          valueFrom:
+            secretKeyRef:
+              name: grafana-cloud-logs
+              key: url
+        - name: GRAFANA_CLOUD_LOKI_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: grafana-cloud-logs
+              key: username
+        - name: GRAFANA_CLOUD_LOKI_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: grafana-cloud-logs
+              key: token
+        args:
+        - run
+        - --server.http.listen-addr=0.0.0.0:12345
+        - --storage.path=/tmp/alloy-data
+        - /etc/alloy/config.alloy
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
+        readinessProbe:
+          httpGet:
+            path: /-/ready
+            port: 12345
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /-/healthy
+            port: 12345
+          initialDelaySeconds: 30
+          periodSeconds: 20
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: config
+          mountPath: /etc/alloy
+          readOnly: true
+        - name: data
+          mountPath: /tmp/alloy-data
+        - name: container-logs
+          mountPath: /var/log/containers
+          readOnly: true
+        - name: pod-logs
+          mountPath: /var/log/pods
+          readOnly: true
+        - name: syslog
+          mountPath: /var/log/host-syslog
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: alloy-node-config
+      - name: data
+        emptyDir: {}
+      - name: container-logs
+        hostPath:
+          path: /var/log/containers
+          type: Directory
+      - name: pod-logs
+        hostPath:
+          path: /var/log/pods
+          type: Directory
+      - name: syslog
+        hostPath:
+          path: /var/log/syslog
+          type: FileOrCreate

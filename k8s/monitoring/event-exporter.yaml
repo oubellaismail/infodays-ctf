@@ -1,0 +1,193 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kubernetes-event-exporter
+  namespace: kube-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubernetes-event-exporter
+rules:
+- apiGroups: [""]
+  resources: ["events", "namespaces"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubernetes-event-exporter
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubernetes-event-exporter
+subjects:
+- kind: ServiceAccount
+  name: kubernetes-event-exporter
+  namespace: kube-system
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kubernetes-event-exporter
+  namespace: kube-system
+data:
+  export_events.py: |
+    import json
+    import os
+    import ssl
+    import sys
+    import time
+    import urllib.error
+    import urllib.request
+
+
+    API_SERVER = os.environ.get("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc")
+    API_PORT = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+    TOKEN_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+    CA_PATH = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+
+
+    def watch_events():
+        with open(TOKEN_PATH, "r", encoding="utf-8") as token_file:
+            token = token_file.read().strip()
+
+        context = ssl.create_default_context(cafile=CA_PATH)
+        url = (
+            f"https://{API_SERVER}:{API_PORT}/api/v1/events"
+            "?watch=1&allowWatchBookmarks=true&timeoutSeconds=300"
+        )
+        request = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+        )
+
+        with urllib.request.urlopen(request, context=context, timeout=330) as response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8").strip()
+                if not line:
+                    continue
+                payload = json.loads(line)
+                event = payload.get("object") or {}
+                if payload.get("type") == "BOOKMARK":
+                    continue
+
+                record = {
+                    "cluster": "infodays-ctf",
+                    "kind": "kubernetes_event",
+                    "watch_type": payload.get("type"),
+                    "namespace": event.get("metadata", {}).get("namespace"),
+                    "name": event.get("metadata", {}).get("name"),
+                    "reason": event.get("reason"),
+                    "type": event.get("type"),
+                    "message": event.get("message"),
+                    "count": event.get("count"),
+                    "first_timestamp": event.get("firstTimestamp"),
+                    "last_timestamp": event.get("lastTimestamp"),
+                    "event_time": event.get("eventTime"),
+                    "reporting_component": event.get("reportingComponent"),
+                    "reporting_instance": event.get("reportingInstance"),
+                    "source_component": (event.get("source") or {}).get("component"),
+                    "source_host": (event.get("source") or {}).get("host"),
+                    "involved_object": {
+                        "kind": (event.get("involvedObject") or {}).get("kind"),
+                        "namespace": (event.get("involvedObject") or {}).get("namespace"),
+                        "name": (event.get("involvedObject") or {}).get("name"),
+                        "field_path": (event.get("involvedObject") or {}).get("fieldPath"),
+                    },
+                }
+                print(json.dumps(record, separators=(",", ":")), flush=True)
+
+
+    def main():
+        while True:
+            try:
+                watch_events()
+            except urllib.error.HTTPError as exc:
+                print(
+                    json.dumps(
+                        {
+                            "cluster": "infodays-ctf",
+                            "kind": "kubernetes_event_exporter_error",
+                            "error": f"http {exc.code}",
+                            "message": exc.reason,
+                        }
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(5)
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    json.dumps(
+                        {
+                            "cluster": "infodays-ctf",
+                            "kind": "kubernetes_event_exporter_error",
+                            "error": type(exc).__name__,
+                            "message": str(exc),
+                        }
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+                time.sleep(5)
+
+
+    if __name__ == "__main__":
+        main()
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kubernetes-event-exporter
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kubernetes-event-exporter
+  template:
+    metadata:
+      labels:
+        app: kubernetes-event-exporter
+    spec:
+      serviceAccountName: kubernetes-event-exporter
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: event-exporter
+        image: python:3.12-alpine
+        command: ["python3", "/opt/exporter/export_events.py"]
+        resources:
+          requests:
+            cpu: 25m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: script
+          mountPath: /opt/exporter
+          readOnly: true
+      volumes:
+      - name: script
+        configMap:
+          name: kubernetes-event-exporter
+
