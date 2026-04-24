@@ -22,9 +22,59 @@ import io
 import zipfile
 import threading
 from datetime import datetime
+import logging as _logging
+
+_audit_log = _logging.getLogger("ctfd.audit")
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
+
+def _slugify_name(name):
+    """Convert a CTFd challenge name to the manifest-style slug used by downloads."""
+    import re as _re
+    slug = (name or "").lower().replace(" ", "-")
+    return _re.sub(r"[^a-z0-9-]", "", slug)
+
+
+def _get_current_team_id():
+    """Return the current authenticated team id, or None."""
+    try:
+        from CTFd.utils.user import get_current_team
+        team = get_current_team()
+        return str(team.id) if team else None
+    except Exception:
+        return None
+
+
+def _get_current_user_id():
+    """Return the current authenticated user id, or None."""
+    try:
+        from CTFd.utils.user import get_current_user
+        user = get_current_user()
+        return user.id if user else None
+    except Exception:
+        return None
+
+
+def _get_status_code(resp):
+    """Extract HTTP status code from a Flask Response or (response, int) tuple."""
+    if isinstance(resp, tuple):
+        return resp[1]
+    return getattr(resp, "status_code", 200)
+
+
+def _challenge_is_visible(challenge_manifest_id):
+    """Return True if the manifest slug maps to a visible CTFd challenge."""
+    try:
+        from CTFd.models import Challenges
+        challenge = Challenges.query.all()
+        for ch in challenge:
+            if _slugify_name(getattr(ch, "name", "")) != challenge_manifest_id:
+                continue
+            return getattr(ch, "state", "") == "visible"
+    except Exception:
+        return False
+    return False
 
 def _derive(team_id, challenge_manifest_id, master_secret):
     """Return the derived flag string for a given team + challenge."""
@@ -61,6 +111,37 @@ def _log_cheater(submitting_team_id, submitting_user_id, submitted_flag, owner_t
         db.session.commit()
     except Exception:
         pass  # Never let cheating detection crash flag validation
+
+
+def _log_audit(action, user_id, team_id, challenge_id, remote_ip, outcome, status_code, requested_team_id=None):
+    """
+    Emit one structured JSON audit line to stdout.
+    Grafana Alloy ships pod stdout to Loki automatically. Never raises.
+
+    action            : "status" | "activate" | "deactivate" | "download"
+    user_id           : CTFd user id of the caller (int or None)
+    team_id           : effective team id after server-side enforcement
+    challenge_id      : challenge manifest slug, or None for status calls
+    remote_ip         : flask_request.remote_addr (real IP after ingress fix 9a10b46)
+    outcome           : "allowed" | "denied"
+    status_code       : HTTP status returned to the caller
+    requested_team_id : raw team_id from URL/body — when it differs from team_id, cross-team abuse is indicated
+    """
+    try:
+        _audit_log.info(json.dumps({
+            "audit_event":       True,
+            "action":            action,
+            "user_id":           user_id,
+            "team_id":           str(team_id) if team_id is not None else None,
+            "requested_team_id": str(requested_team_id) if requested_team_id is not None else None,
+            "challenge_id":      challenge_id,
+            "remote_ip":         remote_ip,
+            "outcome":           outcome,
+            "status_code":       status_code,
+            "ts":                datetime.utcnow().isoformat() + "Z",
+        }))
+    except Exception:
+        pass  # Never let audit logging crash a user-facing route
 
 
 # ── Team-bound flag type ─────────────────────────────────────────────────────
@@ -213,12 +294,49 @@ class MultiFlagChallenge:
 
         total = len(components)
 
+        import re as _re
+
+        def _apk_expected(sf, cid, tid):
+            """For per-team APK flags: static_flag is a template ending in _{hex8}}.
+            Replace the stored placeholder hex8 with this team's derived hex8."""
+            m = _re.search(r'_([0-9a-f]{8})\}$', sf, _re.IGNORECASE)
+            if not m:
+                return None
+            apk_key = _re.sub(r'-\d+$', '', cid)
+            team_hex8 = _hmac.new(
+                master_secret.encode(),
+                f"{tid}:{apk_key}".encode(),
+                hashlib.sha256,
+            ).digest()[:4].hex()
+            return sf[:m.start(1)] + team_hex8 + '}'
+
+        def _team_table_flag(cid, comp_id, tid):
+            """Look up per-team flag from multi_flag_team_flags table."""
+            row = db.session.execute(
+                text("SELECT flag_content FROM multi_flag_team_flags "
+                     "WHERE challenge_id=:cid AND component_id=:comp AND team_id=:tid"),
+                {"cid": cid, "comp": comp_id, "tid": tid}
+            ).fetchone()
+            return row[0] if row else None
+
         for comp in components:
             comp_id, env_var, initial, minimum, decay, static_flag = comp
-            if static_flag:
-                # File-based challenge: validate against pre-generated exact flag
-                if provided != static_flag:
+
+            # Check multi_flag_team_flags table first (per-team pre-generated flags)
+            team_table_flag = _team_table_flag(challenge.id, comp_id, team.id)
+            if team_table_flag is not None:
+                if provided != team_table_flag:
                     continue
+            elif static_flag:
+                expected_flag = _apk_expected(static_flag, comp_id, team.id)
+                if expected_flag is not None:
+                    # Per-team APK flag: compare against team-derived version
+                    if provided != expected_flag:
+                        continue
+                else:
+                    # Plain static flag: exact match for all teams
+                    if provided != static_flag:
+                        continue
             else:
                 # Service challenge: validate against HMAC-derived flag
                 expected = _derive(team.id, comp_id, master_secret)
@@ -267,21 +385,27 @@ class MultiFlagChallenge:
             _mf_tls.is_progress = True
             return (False, f"Flag found! {new_solved_count}/{total} complete. +{pts} pts")
 
-        # Cheating detection for HMAC-derived components (not static_flag)
+        # Cheating detection for HMAC-derived and per-team APK components
         try:
             from CTFd.models import Teams
             all_teams = Teams.query.filter(Teams.id != team.id).all()
+            all_comps = db.session.execute(
+                text("SELECT component_id, COALESCE(static_flag,'') "
+                     "FROM multi_flag_components WHERE challenge_id = :cid"),
+                {"cid": challenge.id}
+            ).fetchall()
+            user_obj = get_current_user()
             for other in all_teams:
-                hmac_components = db.session.execute(
-                    text("SELECT component_id FROM multi_flag_components "
-                         "WHERE challenge_id = :cid "
-                         "AND (static_flag IS NULL OR static_flag = '')"),
-                    {"cid": challenge.id}
-                ).fetchall()
-                for (cmp_id,) in hmac_components:
-                    candidate = _derive(other.id, cmp_id, master_secret)
+                for (cmp_id, sf) in all_comps:
+                    candidate = _team_table_flag(challenge.id, cmp_id, other.id)
+                    if candidate is None:
+                        if sf:
+                            candidate = _apk_expected(sf, cmp_id, other.id)
+                            if candidate is None:
+                                continue
+                        else:
+                            candidate = _derive(other.id, cmp_id, master_secret)
                     if _hmac.compare_digest(candidate, provided):
-                        user_obj = get_current_user()
                         _log_cheater(team.id, user_obj.id if user_obj else None,
                                      provided, other.id, cmp_id)
                         break
@@ -499,23 +623,77 @@ def load(app):
 
     @blueprint.route("/controller-proxy/status/<team_id>")
     def proxy_status(team_id):
+        user_id         = _get_current_user_id()
+        current_team_id = _get_current_team_id()
+        remote_ip       = flask_request.remote_addr
+
         if not _check_authed():
+            _log_audit("status", user_id, current_team_id, None, remote_ip, "denied", 401,
+                       requested_team_id=team_id)
             return jsonify({"error": "unauthorized"}), 401
-        return _proxy("GET", "/status/" + team_id)
+
+        if not _check_admin():
+            if not current_team_id:
+                _log_audit("status", user_id, None, None, remote_ip, "denied", 403,
+                           requested_team_id=team_id)
+                return jsonify({"error": "no team"}), 403
+            if team_id != current_team_id:
+                _log_audit("status", user_id, current_team_id, None, remote_ip, "denied", 403,
+                           requested_team_id=team_id)
+                return jsonify({"error": "forbidden"}), 403
+
+        resp = _proxy("GET", "/status/" + team_id)
+        _log_audit("status", user_id, current_team_id, None, remote_ip, "allowed",
+                   _get_status_code(resp), requested_team_id=team_id)
+        return resp
 
     @blueprint.route("/controller-proxy/activate", methods=["POST"])
     def proxy_activate():
+        user_id   = _get_current_user_id()
+        remote_ip = flask_request.remote_addr
+        data      = flask_request.get_json(silent=True) or {}
+
         if not _check_authed():
+            _log_audit("activate", user_id, None, data.get("challenge_id"), remote_ip, "denied", 401)
             return jsonify({"error": "unauthorized"}), 401
-        data = flask_request.get_json(silent=True) or {}
-        return _proxy("POST", "/activate", data)
+
+        if not _check_admin():
+            current_team_id = _get_current_team_id()
+            if not current_team_id:
+                _log_audit("activate", user_id, None, data.get("challenge_id"), remote_ip, "denied", 403)
+                return jsonify({"error": "no team"}), 403
+            data["team_id"] = current_team_id
+        else:
+            current_team_id = data.get("team_id")
+
+        resp = _proxy("POST", "/activate", data)
+        _log_audit("activate", user_id, current_team_id, data.get("challenge_id"),
+                   remote_ip, "allowed", _get_status_code(resp))
+        return resp
 
     @blueprint.route("/controller-proxy/deactivate", methods=["POST"])
     def proxy_deactivate():
+        user_id   = _get_current_user_id()
+        remote_ip = flask_request.remote_addr
+        data      = flask_request.get_json(silent=True) or {}
+
         if not _check_authed():
+            _log_audit("deactivate", user_id, None, data.get("challenge_id"), remote_ip, "denied", 401)
             return jsonify({"error": "unauthorized"}), 401
-        data = flask_request.get_json(silent=True) or {}
-        return _proxy("POST", "/deactivate", data)
+
+        if not _check_admin():
+            current_team_id = _get_current_team_id()
+            if not current_team_id:
+                _log_audit("deactivate", user_id, None, data.get("challenge_id"), remote_ip, "denied", 403)
+                return jsonify({"error": "no team"}), 403
+            data["team_id"] = current_team_id
+        else:
+            current_team_id = data.get("team_id")
+
+        resp = _proxy("POST", "/deactivate", data)
+        _log_audit("deactivate", user_id, current_team_id, data.get("challenge_id"),
+                   remote_ip, "allowed", _get_status_code(resp))
+        return resp
 
     # ── Per-team static challenge download ───────────────────────────────────
 
@@ -537,6 +715,8 @@ def load(app):
         if not re.match(r'^[a-z0-9-]+$', challenge_manifest_id):
             return jsonify({"error": "invalid challenge id"}), 400
 
+        remote_ip = flask_request.remote_addr
+
         user = get_current_user()
         if not user:
             return jsonify({"error": "unauthorized"}), 401
@@ -544,6 +724,10 @@ def load(app):
         team = get_current_team()
         if not team:
             return jsonify({"error": "no team"}), 403
+
+        if not _check_admin() and not _challenge_is_visible(challenge_manifest_id):
+            _log_audit("download", user.id, str(team.id), challenge_manifest_id, remote_ip, "denied", 404)
+            return jsonify({"error": "challenge not available"}), 404
 
         STATIC_FILES_URL = os.environ.get(
             "STATIC_FILES_URL",
@@ -555,11 +739,14 @@ def load(app):
         try:
             with _ureq.urlopen(files_url, timeout=10) as resp:
                 if resp.status != 200:
+                    _log_audit("download", user.id, str(team.id), challenge_manifest_id, remote_ip, "denied", 404)
                     return jsonify({"error": "challenge files not available"}), 404
                 zip_data = resp.read()
         except Exception:
+            _log_audit("download", user.id, str(team.id), challenge_manifest_id, remote_ip, "denied", 404)
             return jsonify({"error": "challenge files not available"}), 404
 
+        _log_audit("download", user.id, str(team.id), challenge_manifest_id, remote_ip, "allowed", 200)
         return send_file(
             io.BytesIO(zip_data),
             mimetype="application/zip",
