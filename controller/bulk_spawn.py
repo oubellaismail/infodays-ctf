@@ -194,10 +194,14 @@ def create_deployment(apps_v1: Any, team_id: str, challenge: dict) -> str:
             requests={"cpu": "0.05", "memory": "32Mi"},
         ),
         security_context=V1SecurityContext(
-            allow_privilege_escalation=False,
+            allow_privilege_escalation=bool(challenge.get("allow_privilege_escalation", False)),
             # run_as_root challenges need DAC_OVERRIDE + CHOWN to write system dirs as root;
             # dropping ALL strips those even from uid 0.
-            capabilities=V1Capabilities(drop=["ALL"]) if not challenge.get("run_as_root") else None,
+            # allow_privilege_escalation challenges also need SETUID/SETGID so suid binaries keep privs.
+            capabilities=V1Capabilities(
+                drop=["ALL"] if not challenge.get("run_as_root") else [],
+                add=["SETUID", "SETGID"] if challenge.get("allow_privilege_escalation") else [],
+            ),
             **({} if challenge.get("run_as_root") else {
                 "run_as_non_root": True,
                 "run_as_user": 1000,

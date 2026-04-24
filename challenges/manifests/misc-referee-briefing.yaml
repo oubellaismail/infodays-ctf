@@ -8,7 +8,8 @@ decay: 20
 image: registry.digitalocean.com/infodays-registry/challenges:referee-briefing
 port: 4444
 type: tcp
-run_as_root: true   # plants flags in /root/, uses runuser to drop to referee
+run_as_root: true                  # plants flags in /root/, uses runuser to drop to referee
+allow_privilege_escalation: true   # SUID find (GTFOBins privesc) requires NoNewPrivs=0
 flags:
   - id: referee-briefing-1
     name: "Referee Briefing — Part 1"
