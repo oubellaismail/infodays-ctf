@@ -375,6 +375,9 @@ else
   kubectl apply -f "$K8S/network-policies/ctfd-allow-internal.yaml" 2>/dev/null || true
   kubectl apply -f "$K8S/network-policies/ctfd-allow-controller-egress.yaml" 2>/dev/null || true
 
+  step "Deploying centralized logging stack..."
+  bash "$SCRIPT_DIR/deploy-logging.sh"
+
   ok "K8s stack deployed"
 
   # ── tcp-services ConfigMap (required by nginx for TCP challenge proxying) ──
