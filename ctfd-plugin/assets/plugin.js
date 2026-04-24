@@ -323,13 +323,9 @@
         if (!container.querySelector(".ctf-controller-row")) {
           var dlRow = document.createElement("div");
           dlRow.className = "ctf-controller-row";
-          var dlBadge = document.createElement("span");
-          dlBadge.className = "ctf-badge ctf-badge--download";
-          dlBadge.textContent = "File Challenge";
-          dlRow.appendChild(dlBadge);
           var dlBtn = document.createElement("a");
           dlBtn.href = "/download/" + currentChallengeId;
-          dlBtn.className = "btn btn-sm btn-primary";
+          dlBtn.className = "btn btn-sm btn-primary w-100";
           dlBtn.textContent = "\u2B07 Download Challenge";
           dlBtn.setAttribute("download", "");
           dlRow.appendChild(dlBtn);
@@ -341,13 +337,9 @@
       container.innerHTML = "";
       var dlRow = document.createElement("div");
       dlRow.className = "ctf-controller-row";
-      var dlBadge = document.createElement("span");
-      dlBadge.className = "ctf-badge ctf-badge--download";
-      dlBadge.textContent = "File Challenge";
-      dlRow.appendChild(dlBadge);
       var dlBtn = document.createElement("a");
       dlBtn.href = "/download/" + currentChallengeId;
-      dlBtn.className = "btn btn-sm btn-primary";
+      dlBtn.className = "btn btn-sm btn-primary w-100";
       dlBtn.textContent = "\u2B07 Download Challenge";
       dlBtn.setAttribute("download", "");
       dlRow.appendChild(dlBtn);
