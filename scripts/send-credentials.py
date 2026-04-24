@@ -54,26 +54,24 @@ REQUIRED_COLUMNS = {"team_name", "player_name", "email", "password"}
 
 # ── Email templates ────────────────────────────────────────────────────────────
 
+DISCORD_URL = "https://discord.gg/hdnm9SyQ"
+
+
 def build_plain(player_name: str, team_name: str, password: str,
                 ctfd_url: str, event_date: str) -> str:
     return f"""\
-InfoDays CTF — Login Credentials
-=================================
-
 Hello {player_name},
 
-You have been registered for InfoDays CTF as a member of team "{team_name}".
+You are registered for the InfoDays CTF Qualification as a member of team "{team_name}".
 
-Your credentials
-----------------
+The qualification starts today at 8:00 PM.
+
+Your login credentials:
   Username : {player_name}
   Password : {password}
-
   Platform : {ctfd_url}
-  Starts   : {event_date}
-  Rules    : {ctfd_url}/rules
 
-Keep these credentials private. Do not share them with other teams.
+Join our Discord server to stay updated: {DISCORD_URL}
 
 Good luck,
 InfoDays CTF Team
@@ -82,7 +80,6 @@ InfoDays CTF Team
 
 def build_html(player_name: str, team_name: str, password: str,
                ctfd_url: str, event_date: str) -> str:
-
     return f"""\
 <!DOCTYPE html>
 <html lang="en">
@@ -91,81 +88,26 @@ def build_html(player_name: str, team_name: str, password: str,
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>InfoDays CTF — Login Credentials</title>
 </head>
-<body style="margin:0;padding:0;background-color:#f4f4f4;font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#222;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f4f4;padding:32px 16px;">
-    <tr>
-      <td align="center">
-        <table width="540" cellpadding="0" cellspacing="0" border="0"
-               style="max-width:540px;width:100%;background-color:#ffffff;border:1px solid #dddddd;">
+<body style="margin:0;padding:0;font-family:Arial,Helvetica,sans-serif;font-size:15px;color:#222;background:#fff;">
+  <div style="max-width:540px;margin:32px auto;padding:0 16px;">
 
-          <!-- Header -->
-          <tr>
-            <td style="padding:24px 32px;border-bottom:1px solid #dddddd;">
-              <span style="font-size:18px;font-weight:bold;color:#222;">InfoDays CTF</span>
-            </td>
-          </tr>
+    <p>Hello {player_name},</p>
 
-          <!-- Body -->
-          <tr>
-            <td style="padding:28px 32px;">
-              <p style="margin:0 0 16px;">Hello {player_name},</p>
-              <p style="margin:0 0 24px;">
-                You have been registered for <strong>InfoDays CTF</strong> as a member of team <strong>{team_name}</strong>.
-                Use the credentials below to log in to the platform.
-              </p>
+    <p>You are registered for the <strong>InfoDays CTF Qualification</strong> as a member of team <strong>{team_name}</strong>.</p>
 
-              <!-- Credentials -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0"
-                     style="background-color:#f9f9f9;border:1px solid #dddddd;margin-bottom:24px;">
-                <tr>
-                  <td style="padding:16px 20px;">
-                    <table cellpadding="4" cellspacing="0" border="0">
-                      <tr>
-                        <td style="color:#666;width:90px;">Username</td>
-                        <td style="font-family:'Courier New',Courier,monospace;font-weight:bold;">{player_name}</td>
-                      </tr>
-                      <tr>
-                        <td style="color:#666;">Password</td>
-                        <td style="font-family:'Courier New',Courier,monospace;font-weight:bold;">{password}</td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-              </table>
+    <p>The qualification starts <strong>today at 8:00 PM</strong>.</p>
 
-              <!-- Details -->
-              <table cellpadding="4" cellspacing="0" border="0" style="margin-bottom:24px;">
-                <tr>
-                  <td style="color:#666;width:90px;vertical-align:top;">Platform</td>
-                  <td><a href="{ctfd_url}" style="color:#222;">{ctfd_url}</a></td>
-                </tr>
-                <tr>
-                  <td style="color:#666;vertical-align:top;">Starts</td>
-                  <td>{event_date}</td>
-                </tr>
-                <tr>
-                  <td style="color:#666;vertical-align:top;">Rules</td>
-                  <td><a href="{ctfd_url}/rules" style="color:#222;">{ctfd_url}/rules</a></td>
-                </tr>
-              </table>
+    <p>
+      Username: <strong>{player_name}</strong><br>
+      Password: <strong>{password}</strong><br>
+      Platform: <a href="{ctfd_url}">{ctfd_url}</a>
+    </p>
 
-              <p style="margin:0;color:#666;font-size:13px;">
-                Keep these credentials private. Do not share them with other teams.
-              </p>
-            </td>
-          </tr>
+    <p>Join our Discord server to stay updated: <a href="{DISCORD_URL}">{DISCORD_URL}</a></p>
 
-          <!-- Footer -->
-          <tr>
-            <td style="padding:16px 32px;border-top:1px solid #dddddd;font-size:12px;color:#999;">
-              InfoDays CTF Team
-            </td>
-          </tr>
+    <p>Good luck,<br>InfoDays CTF Team</p>
 
-        </table>
-      </td>
-    </tr>
-  </table>
+  </div>
 </body>
 </html>
 """
