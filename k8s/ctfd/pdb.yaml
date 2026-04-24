@@ -11,14 +11,14 @@ spec:
     matchLabels:
       app: ctfd
 ---
-# Keep controller-api available (min 6 of 8 replicas).
+# Keep controller-api available (min 3 of 4 replicas).
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: controller-api-pdb
   namespace: ctfd
 spec:
-  minAvailable: 6
+  minAvailable: 3
   selector:
     matchLabels:
       app: controller-api
