@@ -38,3 +38,8 @@ output "challenges_namespace" {
   value       = "challenges"
   description = "Canonical name for challenges namespace"
 }
+
+output "mysql_node_pool_id" {
+  value       = digitalocean_kubernetes_node_pool.mysql.id
+  description = "Dedicated MySQL node pool UUID"
+}
