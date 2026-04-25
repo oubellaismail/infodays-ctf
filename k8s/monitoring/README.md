@@ -7,6 +7,7 @@ This directory deploys centralized logging for the CTF platform:
 - `event-exporter.yaml`: Kubernetes event exporter that writes JSON logs to stdout
 - `hubble-flows.yaml`: Hubble flow exporter that streams Cilium network flows to stdout
 - `alloy-node.yaml`: pod log collection from `/var/log/containers` and node syslog collection
+- `metrics-server.yaml`: Kubernetes Metrics Server v0.8.1 so `kubectl top` works during event operations
 - `networkpolicy.yaml`: collector-specific allow rules required under the namespace default-deny model
 
 After deployment:
@@ -18,6 +19,7 @@ After deployment:
 - Kubernetes events are exported from `kube-system` and ingested through the node collector
 - Hubble network flows are exported from `kube-system` and ingested through the node collector
 - Node syslog is collected when the host writes to `/var/log/syslog`
+- Metrics Server exposes live CPU/memory usage through the Kubernetes Metrics API
 - `scripts/deploy-logging.sh` smoke-tests Loki readiness, pod-log ingestion, Kubernetes event ingestion, and Hubble flow ingestion
 
 Useful checks:
@@ -27,6 +29,8 @@ Useful checks:
 - `kubectl logs -n monitoring -l app=alloy-node --tail=100`
 - `kubectl get secret -n monitoring grafana-cloud-logs`
 - `kubectl get pods,svc,networkpolicy -n monitoring`
+- `kubectl top nodes`
+- `kubectl top pods -A --containers`
 - `bash scripts/deploy-logging.sh`
 
 This does not create firewall traffic logs. DigitalOcean Cloud Firewalls do not

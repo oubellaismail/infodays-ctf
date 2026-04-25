@@ -14,6 +14,13 @@ spec:
       labels:
         app: mysql
     spec:
+      nodeSelector:
+        doks.digitalocean.com/node-pool: mysql-pool
+      tolerations:
+      - key: workload
+        operator: Equal
+        value: mysql
+        effect: NoSchedule
       securityContext:
         fsGroup: 999
         seccompProfile:

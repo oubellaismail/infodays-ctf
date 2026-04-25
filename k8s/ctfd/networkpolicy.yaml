@@ -295,7 +295,6 @@ spec:
   policyTypes:
   - Egress
 ---
----
 # Controller: allow egress to ctfd-service (bulk_spawn + import_flags use internal URL)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
