@@ -274,20 +274,23 @@ def get_status(team_id: str, request: Request, _=Depends(verify_controller_key))
     challenges = []
     for deploy in deploys:
         challenge_id = deploy.metadata.labels.get("challenge")
-        replicas = deploy.spec.replicas or 0
+        desired_replicas = deploy.spec.replicas or 0
+        ready_replicas = (deploy.status.ready_replicas or 0) if deploy.status else 0
         activated_at = (deploy.metadata.annotations or {}).get("ctf/activated-at", "")
 
-        # Compute status
-        if replicas == 1:
+        # Compute status — only "running" when pod is actually ready to serve
+        if desired_replicas == 1 and ready_replicas == 1:
             status = "running"
-        elif replicas == 0 and activated_at:
+        elif desired_replicas == 1 and ready_replicas == 0:
+            status = "starting"
+        elif desired_replicas == 0 and activated_at:
             status = "suspended"
-        elif replicas == 0 and not activated_at:
+        elif desired_replicas == 0 and not activated_at:
             status = "fresh"
         else:
             status = "unknown"
 
-        url = build_challenge_url(core_v1, team_id, challenge_id) if replicas == 1 else None
+        url = build_challenge_url(core_v1, team_id, challenge_id) if status == "running" else None
 
         challenges.append(
             ChallengeStatus(

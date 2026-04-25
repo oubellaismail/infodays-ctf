@@ -46,6 +46,8 @@ from kubernetes.client.models import (
     V1PodSecurityContext,
     V1Capabilities,
     V1SeccompProfile,
+    V1Probe,
+    V1TCPSocketAction,
 )
 
 from k8s_client import init_k8s_client
@@ -104,7 +106,7 @@ def fetch_teams(ctfd_url: str, admin_token: str) -> list[dict]:
         admin_token: CTFd admin API token
 
     Returns:
-        List of {id: str, name: str} dicts
+        List of active {id: str, name: str} dicts, excluding hidden/banned teams.
     """
     url = f"{ctfd_url}/api/v1/teams?per_page=100"
     # Content-Type required on all CTFd token-auth requests (including GETs);
@@ -116,8 +118,19 @@ def fetch_teams(ctfd_url: str, admin_token: str) -> list[dict]:
         response.raise_for_status()
         data = response.json()
         teams = data.get("data", [])
-        logger.info(f"Fetched {len(teams)} teams from CTFd")
-        return [{"id": str(t["id"]), "name": t.get("name", "")} for t in teams]
+        active_teams = [
+            {"id": str(t["id"]), "name": t.get("name", "")}
+            for t in teams
+            if not bool(t.get("banned")) and not bool(t.get("hidden"))
+        ]
+        skipped = len(teams) - len(active_teams)
+        logger.info(
+            "Fetched %s teams from CTFd (%s active, %s skipped hidden/banned)",
+            len(teams),
+            len(active_teams),
+            skipped,
+        )
+        return active_teams
     except Exception as e:
         logger.error(f"Failed to fetch teams: {e}")
         raise
@@ -189,6 +202,13 @@ def create_deployment(apps_v1: Any, team_id: str, challenge: dict) -> str:
         image_pull_policy="Always",
         ports=all_ports,
         env=env_vars,
+        readiness_probe=V1Probe(
+            tcp_socket=V1TCPSocketAction(port=container_port),
+            initial_delay_seconds=5,
+            period_seconds=3,
+            failure_threshold=40,  # allows up to ~120s for slow-init challenges
+            success_threshold=1,
+        ),
         resources=V1ResourceRequirements(
             limits={"cpu": "0.5", "memory": challenge.get("memory_limit", "128Mi")},
             requests={"cpu": "0.05", "memory": "32Mi"},
