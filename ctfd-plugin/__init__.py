@@ -25,6 +25,13 @@ from datetime import datetime
 import logging as _logging
 
 _audit_log = _logging.getLogger("ctfd.audit")
+_audit_log.setLevel(_logging.INFO)
+if not _audit_log.handlers:
+    _audit_handler = _logging.StreamHandler()
+    _audit_handler.setLevel(_logging.INFO)
+    _audit_handler.setFormatter(_logging.Formatter("%(message)s"))
+    _audit_log.addHandler(_audit_handler)
+_audit_log.propagate = False  # don't double-emit via root logger
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -927,6 +934,71 @@ def load(app):
                 upserted += 1
             db.session.commit()
             return jsonify({"message": f"Registered {upserted} components for challenge {challenge_id}"})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({"error": str(e)}), 500
+
+    @blueprint.route("/api/plugin/multi-flag-team-flags", methods=["POST"])
+    def multi_flag_team_flags_register():
+        """
+        Register per-team flag values for multi_flag challenge components.
+        Called by generate-static-artifacts.py after artifact generation.
+        Auth: CTFd admin API token in Authorization header.
+        Body: {
+            challenge_id: int,
+            team_id: int,
+            flags: [{"component_id": str, "flag_content": str}]
+        }
+        """
+        auth = flask_request.headers.get("Authorization", "")
+        if not auth.startswith("Token "):
+            return jsonify({"error": "unauthorized"}), 401
+        token_value = auth[6:].strip()
+
+        try:
+            from CTFd.models import db, Tokens, Users
+            tok = Tokens.query.filter_by(value=token_value).first()
+            if not tok:
+                return jsonify({"error": "invalid token"}), 401
+            user = Users.query.get(tok.user_id)
+            if not user or user.type != "admin":
+                return jsonify({"error": "admin only"}), 403
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+        body = flask_request.get_json(silent=True) or {}
+        challenge_id = body.get("challenge_id")
+        team_id      = body.get("team_id")
+        flags        = body.get("flags", [])
+
+        if not challenge_id or not team_id or not flags:
+            return jsonify({"error": "challenge_id, team_id, and flags required"}), 400
+
+        try:
+            from CTFd.models import db
+            from sqlalchemy import text
+
+            upserted = 0
+            for entry in flags:
+                db.session.execute(
+                    text("""
+                        INSERT INTO multi_flag_team_flags
+                            (challenge_id, team_id, component_id, flag_content)
+                        VALUES
+                            (:cid, :tid, :comp, :flag)
+                        ON DUPLICATE KEY UPDATE
+                            flag_content = VALUES(flag_content)
+                    """),
+                    {
+                        "cid":  challenge_id,
+                        "tid":  team_id,
+                        "comp": entry["component_id"],
+                        "flag": entry["flag_content"],
+                    }
+                )
+                upserted += 1
+            db.session.commit()
+            return jsonify({"message": f"Registered {upserted} team flags for team {team_id} on challenge {challenge_id}"})
         except Exception as e:
             db.session.rollback()
             return jsonify({"error": str(e)}), 500
