@@ -1,0 +1,13 @@
+id: pwn-ghost-protocol
+name: "Ghost Protocol"
+category: Pwn
+image: registry.digitalocean.com/infodays-registry/challenges:ghost-protocol
+port: 1337
+type: tcp
+description: |
+  A classified command link has been intercepted.
+  The authentication layer looks weak — but nothing here is what it seems.
+  nc challenges.infodays.net {port}
+initial: 500
+minimum: 75
+decay: 10

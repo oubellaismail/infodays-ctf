@@ -41,9 +41,9 @@ build_push() {
   fi
   echo "  [$tag]"
   if [[ -n "$dockerfile" ]]; then
-    docker build -q -f "$dockerfile" -t "$REGISTRY/challenges:$tag" "$context"
+    docker build -q --platform linux/amd64 -f "$dockerfile" -t "$REGISTRY/challenges:$tag" "$context"
   else
-    docker build -q -t "$REGISTRY/challenges:$tag" "$context"
+    docker build -q --platform linux/amd64 -t "$REGISTRY/challenges:$tag" "$context"
   fi
   docker push "$REGISTRY/challenges:$tag"
 }
