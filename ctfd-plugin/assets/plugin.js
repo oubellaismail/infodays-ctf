@@ -400,6 +400,11 @@
           urlLink.rel = "noopener noreferrer";
           urlLink.className = "ctf-instance-url";
           urlLink.textContent = challenge.url;
+          urlLink.addEventListener("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            window.open(challenge.url, "_blank", "noopener,noreferrer");
+          });
           urlBlock.appendChild(httpLabel);
           urlBlock.appendChild(urlLink);
         }
