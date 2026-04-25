@@ -1,9 +1,0 @@
-id: shanks
-name: "Shanks"
-category: Pwn
-image: registry.digitalocean.com/infodays-registry/challenges:shanks
-port: 1337
-type: tcp
-initial: 500
-minimum: 75
-decay: 10

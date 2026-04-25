@@ -1,0 +1,12 @@
+id: general-mbappe
+name: "General Mbappe"
+category: Reversing
+type: static
+description: >-
+  Le general Mbappe has been tampering with low-level things again.
+  He wrote his own kitchen ISA, then built a tiny `cook` that reads
+  a `recipe` written in it.  Reverse the recipe, find the kitchen
+  pass le general is guarding, and claim the flag.
+initial: 600
+minimum: 80
+decay: 12

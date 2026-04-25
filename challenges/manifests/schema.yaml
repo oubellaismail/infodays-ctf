@@ -8,7 +8,7 @@
 # category: web              # web | pwn | misc | crypto | forensics | reversing | osint
 # image: registry.digitalocean.com/infodays-registry/web-sqli:latest
 # port: 8080                 # Container port
-# type: http                 # http (Ingress + HTTPS) | tcp (NodePort + nc)
+# type: http                 # http (NodePort + browser URL) | tcp (NodePort + nc)
 # memory_limit: 128Mi        # Optional - defaults to 128Mi
 # initial: 500               # Optional - dynamic scoring start (default: 500)
 # minimum: 50                # Optional - dynamic scoring floor (default: 50)
@@ -29,7 +29,7 @@
 # - name: Human-readable challenge name
 # - category: Challenge category shown in CTFd (web/pwn/misc/crypto/forensics/reversing/osint)
 # - type: Determines deployment strategy:
-#     http   → K8s Deployment + Service + Ingress (HTTPS subdomain per team)
+#     http   → K8s Deployment + Service + NodePort (http://challenges.infodays.net:{port})
 #     tcp    → K8s Deployment + Service + NodePort (nc access per team)
 #     static → No K8s resources; builds zip with flag, uploads to CTFd as file download
 # - image: Full DOCR image reference (required for http/tcp, not used for static)
@@ -48,7 +48,7 @@
 # ── Deployment by type ──
 # Service challenges (http/tcp):
 #   deploy-challenge.sh → CTFd entry + ConfigMap + bulk_spawn + import_flags
-#   bulk_spawn creates per-team: Deployment (replicas=0), Service, Secret, Ingress/TCP
+#   bulk_spawn creates per-team: Deployment (replicas=0), Service, Secret
 #   import_flags creates one team-derived flag row per challenge (HMAC validation)
 #
 # Static challenges:

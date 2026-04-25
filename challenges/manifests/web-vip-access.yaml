@@ -1,9 +1,0 @@
-id: vip-access
-name: "VIP Access"
-category: Web
-image: registry.digitalocean.com/infodays-registry/challenges:vip-access
-port: 8080
-type: http
-initial: 300
-minimum: 50
-decay: 20

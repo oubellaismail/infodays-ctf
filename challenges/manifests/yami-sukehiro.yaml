@@ -1,0 +1,26 @@
+id: yami-sukehiro
+name: "Yami Sukehiro"
+category: Web
+description: "Stateful traversal to JWT forgery to SQLi to cron-driven RCE. Recover both the user and root flags."
+image: registry.digitalocean.com/infodays-registry/challenges:yami-sukehiro
+port: 8080
+type: http
+memory_limit: "512Mi"
+initial: 1200
+minimum: 180
+decay: 15
+flags:
+  - id: yami-sukehiro-user
+    name: "Yami Sukehiro — User"
+    category: Web
+    env: FLAG1
+    initial: 450
+    minimum: 60
+    decay: 20
+  - id: yami-sukehiro-root
+    name: "Yami Sukehiro — Root"
+    category: Web
+    env: FLAG2
+    initial: 750
+    minimum: 120
+    decay: 12

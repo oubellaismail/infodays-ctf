@@ -1,0 +1,10 @@
+id: formation
+name: "Formation"
+category: Reversing
+description: "Morocco 2030 — Elite Formation VM. Reverse the custom VM, defeat the fake path, and submit the correct 16-byte formation to claim the flag."
+image: registry.digitalocean.com/infodays-registry/challenges:formation
+port: 1337
+type: tcp
+initial: 1000
+minimum: 150
+decay: 15

@@ -1,0 +1,10 @@
+id: kdb
+name: "KDB"
+category: Crypto
+description: "Kevin De Bruyne runs a private Pass Signal Protocol relay out of Bruges. Recover the session key from the wire transcript and send the right command."
+image: registry.digitalocean.com/infodays-registry/challenges:kdb
+port: 9001
+type: tcp
+initial: 1500
+minimum: 200
+decay: 10

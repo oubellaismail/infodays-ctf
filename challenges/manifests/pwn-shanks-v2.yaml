@@ -1,0 +1,10 @@
+id: shanks-v2
+name: "Shanks v2"
+category: Pwn
+description: "Forking socket service with a custom wire protocol and proof-of-work gate. Break it anyway."
+image: registry.digitalocean.com/infodays-registry/challenges:shanks-v2
+port: 1337
+type: tcp
+initial: 500
+minimum: 75
+decay: 10

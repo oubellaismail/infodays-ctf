@@ -1,7 +1,0 @@
-id: venue-recon
-name: "Venue Recon"
-category: OSINT
-type: static
-initial: 200
-minimum: 30
-decay: 20

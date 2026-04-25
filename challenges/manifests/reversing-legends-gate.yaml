@@ -1,7 +1,0 @@
-id: legends-gate
-name: "Legends Gate"
-category: Reversing
-type: static
-initial: 300
-minimum: 50
-decay: 15

@@ -1,0 +1,10 @@
+id: cr7
+name: "CR7"
+category: Reversing
+description: "Infodays volunteers found a beta Android banking app on the Ouazzane stadium Wi-Fi: Infinity Bank. The backend is still up. Reverse the app, reconstruct the protocol, and help yourself to the good account."
+image: registry.digitalocean.com/infodays-registry/challenges:cr7
+port: 8080
+type: http
+initial: 1000
+minimum: 150
+decay: 15

@@ -1,9 +1,0 @@
-id: var-review
-name: "VAR Review"
-category: Pwn
-image: registry.digitalocean.com/infodays-registry/challenges:var-review
-port: 1337
-type: tcp
-initial: 200
-minimum: 30
-decay: 20
