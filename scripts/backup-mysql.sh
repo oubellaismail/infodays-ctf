@@ -28,10 +28,18 @@ trap 'rm -f "$STDERR_FILE"' EXIT
 
 mkdir -p "${BACKUP_DIR}"
 
+base64_decode() {
+  if base64 --decode >/dev/null 2>&1 <<<""; then
+    base64 --decode
+  else
+    base64 -D
+  fi
+}
+
 # Fetch MySQL root password from K8s Secret ctfd-secrets
 echo "Fetching MySQL root password from K8s Secret ctfd-secrets..."
 MYSQL_ROOT_PASSWORD=$(kubectl get secret ctfd-secrets -n ctfd \
-  -o jsonpath='{.data.MYSQL_ROOT_PASSWORD}' 2>/dev/null | base64 -d) || {
+  -o jsonpath='{.data.MYSQL_ROOT_PASSWORD}' 2>/dev/null | base64_decode) || {
   echo "ERROR: Failed to read MYSQL_ROOT_PASSWORD from K8s Secret ctfd-secrets in namespace ctfd." >&2
   echo "Ensure kubectl is configured and the secret exists." >&2
   exit 3

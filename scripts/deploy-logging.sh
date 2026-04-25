@@ -149,6 +149,9 @@ PY
 info "Deploying Loki..."
 kubectl apply -f k8s/monitoring/loki.yaml
 
+info "Deploying Metrics Server..."
+kubectl apply -f k8s/monitoring/metrics-server.yaml
+
 info "Applying monitoring network policies..."
 kubectl apply -f k8s/monitoring/networkpolicy.yaml
 
@@ -167,6 +170,9 @@ kubectl delete deployment alloy-cluster -n "$NS" --ignore-not-found >/dev/null
 info "Waiting for Loki..."
 wait_for_rollout statefulset loki
 
+info "Waiting for Metrics Server..."
+wait_for_rollout deployment metrics-server kube-system
+
 info "Waiting for node collector..."
 wait_for_rollout daemonset alloy-node
 
@@ -178,6 +184,12 @@ wait_for_rollout deployment hubble-flow-exporter kube-system
 
 info "Verifying Loki readiness..."
 wait_for_loki_ready || fail "Loki did not become queryable from inside the cluster"
+
+info "Verifying Metrics API..."
+if ! kubectl top nodes >/dev/null 2>&1; then
+  sleep 30
+  kubectl top nodes >/dev/null 2>&1 || fail "Metrics API is not returning node usage"
+fi
 
 info "Smoke testing pod log ingestion..."
 APP_MARKER="CODEX_LOG_SMOKE_$(date +%s)"

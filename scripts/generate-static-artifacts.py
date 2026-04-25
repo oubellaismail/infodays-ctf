@@ -42,11 +42,14 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+import yaml
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 CHALLENGES_DIR = REPO / "challenges" / "real" / "challenges"
 OUT_BASE = REPO / "challenges" / "static-content"
+ACTIVE_MASTER_SECRET = ""
+MANIFESTS_DIR = REPO / "challenges" / "manifests"
 
 STATIC_FILE_CHALLENGES = {
     # challenge_id: {"type": "single"|"multi", "gen": <function_name>}
@@ -59,6 +62,7 @@ STATIC_FILE_CHALLENGES = {
     "vip-invitation":        {"type": "single", "gen": "gen_vip_invitation"},
     "venue-recon":           {"type": "single", "gen": "gen_venue_recon"},
     "legends-gate":          {"type": "single", "gen": "gen_legends_gate"},
+    "general-mbappe": {"type": "single", "gen": "gen_general_mbappe"},
 }
 
 # Multi-flag component scoring params (initial, minimum, decay) per challenge
@@ -98,6 +102,17 @@ def derive_hex8(master_secret: str, team_id: int, challenge_id: str) -> str:
     return digest[:8]
 
 
+def derive_team_digest(master_secret: str, team_id: int, challenge_id: str) -> str:
+    """Derive the 32-hex per-team digest used inside infodays{...} flags."""
+    msg = f"{team_id}:{challenge_id}".encode()
+    return _hmac.new(master_secret.encode(), msg, hashlib.sha256).hexdigest()[:32]
+
+
+def derive_team_flag(master_secret: str, team_id: int, challenge_id: str) -> str:
+    """Return the standard team-derived flag string."""
+    return f"infodays{{{derive_team_digest(master_secret, team_id, challenge_id)}}}"
+
+
 def zip_files(files: list[tuple[str, bytes]]) -> bytes:
     """Pack (filename, data) pairs into a zip. Returns zip bytes."""
     buf = io.BytesIO()
@@ -119,6 +134,18 @@ def run(cmd: list[str], cwd=None, env=None) -> subprocess.CompletedProcess:
         print(f"  stderr: {result.stderr[:500]}", file=sys.stderr)
         raise RuntimeError(f"Command failed: {' '.join(cmd)}")
     return result
+
+
+def load_manifest_name_map() -> dict[str, str]:
+    """Return manifest-id -> display-name mapping from challenge manifests."""
+    mapping: dict[str, str] = {}
+    for path in sorted(MANIFESTS_DIR.glob("*.yaml")):
+        if path.name == "schema.yaml":
+            continue
+        data = yaml.safe_load(path.read_text())
+        if isinstance(data, dict) and data.get("id") and data.get("name"):
+            mapping[data["id"]] = data["name"]
+    return mapping
 
 
 # ── Per-challenge generators ──────────────────────────────────────────────────
@@ -593,6 +620,79 @@ def gen_venue_recon(team_id: int, hex8: str, out_dir: Path) -> dict:
     }
 
 
+def gen_general_mbappe(team_id: int, hex8: str, out_dir: Path) -> dict:
+    """Build per-team General Mbappe artifacts with the HMAC-derived digest embedded."""
+    src = CHALLENGES_DIR / "reversing" / "general_mbappe"
+    challenge_id = "general-mbappe"
+    digest = derive_team_digest(ACTIVE_MASTER_SECRET, team_id, challenge_id)
+    flag = f"infodays{{SaamNoLimits_{digest}}}"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        recipe_out = tmp / "recipe.asm"
+        spice_out = tmp / "spice.bin"
+        flag_out = tmp / "flag.txt"
+        cook_out = tmp / "cook"
+        webp_out = tmp / "general_mbappe.webp"
+
+        run(
+            [
+                "python3",
+                str(src / "gen.py"),
+                "--pass",
+                digest,
+                "--recipe-out",
+                str(recipe_out),
+                "--spice-out",
+                str(spice_out),
+                "--flag-out",
+                str(flag_out),
+            ]
+        )
+
+        # Cross-compile for Linux x86-64 via Docker so the binary is correct
+        # regardless of whether this script runs on macOS or Linux.
+        c_src_rel = (src / "src" / "cook.c").relative_to(REPO)
+        run(
+            [
+                "docker", "run", "--rm",
+                "--platform", "linux/amd64",
+                "-v", f"{REPO}:/repo:ro",
+                "-v", f"{tmp}:/out",
+                "gcc:12",
+                "sh", "-c",
+                f"gcc -O2 -Wall -Wextra -std=c11 -o /out/cook /repo/{c_src_rel} "
+                "&& strip --strip-unneeded /out/cook",
+            ]
+        )
+
+        run(
+            [
+                "python3",
+                str(src / "stego.py"),
+                "embed",
+                str(src / "general_nbappe.webp"),
+                str(spice_out),
+                str(webp_out),
+            ]
+        )
+
+        generated_flag = flag_out.read_text().strip()
+        if generated_flag != flag:
+            raise RuntimeError(
+                f"general_mbappe flag mismatch: generated={generated_flag!r} expected={flag!r}"
+            )
+
+        return {
+            "files": [
+                ("cook", cook_out.read_bytes()),
+                ("recipe.asm", recipe_out.read_bytes()),
+                ("general_mbappe.webp", webp_out.read_bytes()),
+            ],
+            "flags": [(challenge_id, flag)],
+        }
+
+
 # ── CTFd API helpers ──────────────────────────────────────────────────────────
 
 def ctfd_get(url: str, token: str, path: str) -> dict:
@@ -657,11 +757,14 @@ def get_all_teams(ctfd_url: str, token: str) -> list[dict]:
 
 def get_challenge_id_by_name(ctfd_url: str, token: str, name: str) -> int | None:
     """Look up CTFd challenge ID by name."""
+    manifest_name_map = load_manifest_name_map()
+    expected_name = manifest_name_map.get(name, name)
+    expected_slug = re.sub(r"[^a-z0-9-]", "", expected_name.lower().replace(" ", "-"))
     resp = ctfd_get(ctfd_url, token, "/api/v1/challenges?view=admin")
     for ch in resp.get("data", []):
         slug = ch["name"].lower().replace(" ", "-").replace(r"[^a-z0-9-]", "")
         slug = re.sub(r"[^a-z0-9-]", "", slug)
-        if slug == name or ch["name"].lower() == name.lower():
+        if slug == name or slug == expected_slug or ch["name"].lower() == expected_name.lower():
             return ch["id"]
     return None
 
@@ -688,19 +791,29 @@ def register_multi_flag_components(
     ctfd_url: str, token: str, challenge_ctfd_id: int,
     challenge_id: str, flags_by_comp: dict[str, str],
 ) -> None:
-    """Register/update component static_flags via the plugin endpoint."""
+    """Register component scoring params (no flags) via the plugin endpoint."""
     base_params = MULTI_FLAG_PARAMS.get(challenge_id, [])
-    components = []
-    for comp in base_params:
-        cid = comp["component_id"]
-        entry = {**comp}
-        if cid in flags_by_comp:
-            entry["flag"] = flags_by_comp[cid]
-        components.append(entry)
-
+    # Only send scoring params — flags go into multi_flag_team_flags per team
+    components = [{k: v for k, v in comp.items() if k != "flag"} for comp in base_params]
     ctfd_post(ctfd_url, token, "/api/plugin/multi-flag-register", {
         "challenge_id": challenge_ctfd_id,
         "components": components,
+    })
+
+
+def register_multi_flag_team_flags(
+    ctfd_url: str, token: str, challenge_ctfd_id: int,
+    team_id: int, flags_by_comp: dict[str, str],
+) -> None:
+    """Register per-team flag values into multi_flag_team_flags table."""
+    flags = [
+        {"component_id": comp_id, "flag_content": flag_val}
+        for comp_id, flag_val in flags_by_comp.items()
+    ]
+    ctfd_post(ctfd_url, token, "/api/plugin/multi-flag-team-flags", {
+        "challenge_id": challenge_ctfd_id,
+        "team_id":      team_id,
+        "flags":        flags,
     })
 
 
@@ -716,6 +829,7 @@ GENERATORS = {
     "vip-invitation":       gen_vip_invitation,
     "venue-recon":          gen_venue_recon,
     "legends-gate":         gen_legends_gate,
+    "general-mbappe": gen_general_mbappe,
 }
 
 
@@ -738,6 +852,8 @@ def main() -> int:
     token = args.admin_token
     master_secret = args.master_secret
     out_dir = Path(args.out_dir)
+    global ACTIVE_MASTER_SECRET
+    ACTIVE_MASTER_SECRET = master_secret
 
     challenges = [c.strip() for c in args.challenges.split(",") if c.strip()]
 
@@ -786,12 +902,9 @@ def main() -> int:
         ch_type = STATIC_FILE_CHALLENGES[challenge_id]["type"]
         ctfd_id = challenge_ctfd_ids.get(challenge_id)
 
-        # Multi-flag: accumulate flags per component across teams for registration
-        # (Since each team gets their own static_flag, we register per-team runs
-        #  but note: multi_flag_components has UNIQUE KEY on (challenge_id, component_id),
-        #  so only one static_flag per component globally — this works for single-team events.
-        #  For multi-team events with per-team static flags, the schema needs a team_id column.)
-        all_comp_flags: dict[str, str] = {}  # component_id → flag (last team wins for now)
+        # Ensure multi_flag_components scoring params are registered once (no flags)
+        if ch_type == "multi" and not args.skip_ctfd and ctfd_id:
+            register_multi_flag_components(ctfd_url, token, ctfd_id, challenge_id, {})
 
         for team in teams:
             team_id = team["id"]
@@ -808,7 +921,6 @@ def main() -> int:
 
             # Write zip
             if "files_zip" in result:
-                # Pre-built zip (fallback)
                 zip_out.write_bytes(result["files_zip"])
             elif "files" in result:
                 zip_data = zip_files(result["files"])
@@ -817,20 +929,19 @@ def main() -> int:
             # Collect flags
             flags = result.get("flags", [])
             for comp_id, flag_val in flags:
-                all_comp_flags[comp_id] = flag_val
                 print(f"    flag: {comp_id} → {flag_val}")
 
-            # Register single-flag challenge per team
-            if ch_type == "single" and not args.skip_ctfd and ctfd_id and flags:
-                _, flag_val = flags[0]
-                register_exact_flag(ctfd_url, token, ctfd_id, flag_val, team_id)
-                print(f"    [CTFd] registered exact flag for team {team_id}")
-
-        # Register multi_flag component static_flags (after all teams processed)
-        if ch_type == "multi" and not args.skip_ctfd and ctfd_id and all_comp_flags:
-            print(f"  [CTFd] registering {len(all_comp_flags)} component flags for {challenge_id}...")
-            register_multi_flag_components(ctfd_url, token, ctfd_id, challenge_id, all_comp_flags)
-            print(f"  [CTFd] done.")
+            if not args.skip_ctfd and ctfd_id and flags:
+                if ch_type == "single":
+                    # Single flag: register exact flag per team in CTFd flags table
+                    _, flag_val = flags[0]
+                    register_exact_flag(ctfd_url, token, ctfd_id, flag_val, team_id)
+                    print(f"    [CTFd] registered exact flag for team {team_id}")
+                elif ch_type == "multi":
+                    # Multi flag: register per-team flags into multi_flag_team_flags table
+                    flags_by_comp = {comp_id: flag_val for comp_id, flag_val in flags}
+                    register_multi_flag_team_flags(ctfd_url, token, ctfd_id, team_id, flags_by_comp)
+                    print(f"    [CTFd] registered {len(flags_by_comp)} team flags for team {team_id}")
 
     print("\n[+] Done. Rebuild and push static-files-server image:")
     print(f"    docker build -f Dockerfile.static-files -t <registry>/static-files:latest .")

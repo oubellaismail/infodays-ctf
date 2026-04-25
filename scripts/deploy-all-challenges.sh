@@ -16,14 +16,17 @@ set -euo pipefail
 # Required environment:
 #   CTFD_URL          — CTFd base URL (e.g., https://ctfd.infodays.net)
 #   CTFD_ADMIN_TOKEN  — CTFd admin API token
-#   CTF_MASTER_SECRET — master secret for flag derivation (unused here, kept for consistency)
+#   CTF_MASTER_SECRET — master secret for HMAC flag derivation (used for static artifact generation)
 #
 # Optional:
+#   REGISTRY           — DOCR registry prefix (default: registry.digitalocean.com/infodays-registry)
 #   CTFD_NAMESPACE     — namespace where controller runs (default: ctfd)
 #   CHALLENGE_NAMESPACE — namespace for challenge pods (default: challenges)
 
 CTFD_URL="${CTFD_URL:?ERROR: CTFD_URL not set}"
 CTFD_ADMIN_TOKEN="${CTFD_ADMIN_TOKEN:?ERROR: CTFD_ADMIN_TOKEN not set}"
+CTF_MASTER_SECRET="${CTF_MASTER_SECRET:?ERROR: CTF_MASTER_SECRET not set}"
+REGISTRY="${REGISTRY:-registry.digitalocean.com/infodays-registry}"
 
 CTFD_NAMESPACE="${CTFD_NAMESPACE:-ctfd}"
 CTFD_INTERNAL_URL="${CTFD_INTERNAL_URL:-http://ctfd-service.${CTFD_NAMESPACE}.svc.cluster.local}"
@@ -38,10 +41,56 @@ fail()  { echo "  ✘ $*" >&2; exit 1; }
 require_cmd() { command -v "$1" &>/dev/null || fail "$1 is required but not installed"; }
 require_cmd kubectl
 require_cmd python3
+require_cmd docker
 
 [ -d "$MANIFESTS_DIR" ] || fail "Manifests directory not found: $MANIFESTS_DIR"
 
 cd "$PROJECT_ROOT"
+
+# ---------------------------------------------------------------------------
+# Step 0: Generate static artifacts for all static challenges + all teams,
+#         then rebuild and push the static-files-server image.
+# ---------------------------------------------------------------------------
+info "Step 0: Generating static artifacts for all teams"
+
+# Collect all static challenge IDs from manifests
+STATIC_CHALLENGES=$(python3 - "$MANIFESTS_DIR" <<'PYEOF'
+import sys, glob, yaml, os
+d = sys.argv[1]
+ids = []
+for f in sorted(glob.glob(os.path.join(d, "*.yaml"))):
+    m = yaml.safe_load(open(f)) or {}
+    if m.get("type") == "static" and m.get("id"):
+        ids.append(m["id"])
+print(" ".join(ids))
+PYEOF
+)
+
+if [ -z "$STATIC_CHALLENGES" ]; then
+  ok "No static challenges found — skipping artifact generation"
+else
+  echo "  Static challenges: $STATIC_CHALLENGES"
+  for chal_id in $STATIC_CHALLENGES; do
+    echo "  Generating: $chal_id"
+    python3 "$SCRIPT_DIR/generate-static-artifacts.py" \
+      --ctfd-url "$CTFD_URL" \
+      --admin-token "$CTFD_ADMIN_TOKEN" \
+      --master-secret "$CTF_MASTER_SECRET" \
+      --challenges "$chal_id" 2>&1 | sed 's/^/    /'
+  done
+
+  info "Step 0b: Rebuilding and pushing static-files-server image"
+  docker build -f "$PROJECT_ROOT/Dockerfile.static-files" \
+    -t "${REGISTRY}/base:static-files" \
+    "$PROJECT_ROOT" 2>&1 | tail -3
+
+  docker push "${REGISTRY}/base:static-files" 2>&1 | tail -3
+
+  kubectl rollout restart deployment/static-files-server -n "$CTFD_NAMESPACE" >/dev/null
+  echo "  Waiting for static-files-server rollout..."
+  kubectl rollout status deployment/static-files-server -n "$CTFD_NAMESPACE" --timeout=60s
+  ok "Static artifacts deployed"
+fi
 
 # ---------------------------------------------------------------------------
 # Step 1: Ensure all CTFd challenges exist (pure HTTP, no kubectl)
