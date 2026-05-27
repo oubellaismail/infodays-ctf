@@ -31,9 +31,32 @@ Announce to teams that the event is open.
 
 ## During Event — Common Operations
 
-### Add a new challenge mid-event
+### Live health watch
+
+Keep these checks running in separate terminals during the first 30 minutes and any peak period:
 
 ```bash
+watch -n 30 'kubectl top nodes && kubectl get pods -A | egrep "CrashLoopBackOff|Error|OOMKilled|Pending|0/" || true'
+watch -n 60 'kubectl get events -A --sort-by=.lastTimestamp | tail -40'
+kubectl logs -n monitoring -l app=alloy-node --tail=100 -f
+```
+
+Escalate if any node stays above 80% memory, if any platform pod restarts, or if MySQL/ProxySQL reports connection errors.
+
+### Add a new challenge mid-event
+
+**Recommended**: Use the one-command deploy script:
+
+```bash
+bash scripts/deploy-challenge.sh challenges/manifests/<challenge-id>.yaml
+```
+
+This handles everything automatically — CTFd entry, ConfigMap, controller restart, bulk_spawn (service) or flag import (static).
+
+**Manual steps** (if the script can't be used):
+
+```bash
+# Service challenges (type: http/tcp):
 # 1. Build and push the new challenge image
 bash scripts/push-challenge.sh <challenge-id> challenges/base-images/<type> <type>
 
@@ -44,9 +67,21 @@ kubectl create configmap challenge-manifests \
   --from-file=challenges/manifests/ -n ctfd --dry-run=client -o yaml | kubectl apply -f -
 kubectl rollout restart deployment/controller-api -n ctfd
 
-# 4. Re-run bulk_spawn to pre-spawn pods for all teams (incl. the new challenge)
-kubectl exec -n ctfd deployment/controller-api -- \
-  python3 bulk_spawn.py --ctfd-url http://localhost:5000 --token "$CTFD_ADMIN_TOKEN"
+# 4. Re-run provisioning via the on-demand provisioner pod
+bash scripts/deploy-challenge.sh challenges/manifests/<challenge-id>.yaml
+
+# Static challenges (type: static):
+# 1. Add the manifest to challenges/manifests/<challenge-id>.yaml
+# 2. Update ConfigMap + restart controller (same as above)
+# 3. Run import_flags to create the team flag row:
+kubectl scale deployment/controller-provisioner -n ctfd --replicas=1
+kubectl rollout status deployment/controller-provisioner -n ctfd --timeout=120s
+PROVISIONER_POD="$(kubectl get pods -n ctfd -l app=controller-provisioner --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')"
+kubectl exec -n ctfd "$PROVISIONER_POD" -- \
+  env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
+  python3 import_flags.py --ctfd-url https://ctfd.infodays.net
+kubectl scale deployment/controller-provisioner -n ctfd --replicas=0
+# No bulk_spawn needed — plugin serves per-team zips on the fly via /download/{id}
 ```
 
 ### Restart a broken team pod (manual)
@@ -67,8 +102,8 @@ curl -s -H "Authorization: Token $CTFD_ADMIN_TOKEN" \
   https://ctfd.infodays.net/admin/cheaters | jq .
 ```
 
-Fields returned: `submitting_team`, `submitting_team_id`, `submitted_flag`, `owner_team`,
-`owner_team_id`, `challenge`, `submitted_at`.
+Fields returned: `submitting_team`, `submitting_team_id`, `submitting_user`, `submitting_user_id`,
+`submitted_flag`, `owner_team`, `owner_team_id`, `challenge`, `submitted_at`.
 
 An entry here means the team submitted a flag that was cryptographically matched to another team.
 The submission was **rejected** (returned False). Log this for integrity review after the event.
@@ -96,12 +131,12 @@ kubectl scale deployment/ctfd -n ctfd --replicas=5
 
 ### Scale controller API under activate/status pressure
 
-Current baseline is 8 replicas. If activate or status calls are failing or slow:
+Current baseline is 4 replicas. If activate or status calls are failing or slow and node memory has headroom:
 ```bash
-kubectl scale deployment/controller-api -n ctfd --replicas=12
+kubectl scale deployment/controller-api -n ctfd --replicas=6
 ```
 
-The controller is IO-bound (K8s API calls) — more replicas help more than bigger pods.
+Scale back to 4 once the burst ends. Avoid returning to the old 8+ replica profile unless Metrics Server shows clear memory headroom.
 
 ### Flush Redis sessions (emergency — forces all users to re-login)
 
@@ -122,7 +157,7 @@ CTFd admin panel → **Configuration** → **End time** → update and save.
 
 ### MySQL OOM or crash
 
-MySQL may OOM-kill under extreme load. Symptoms: CTFd returns 500 errors, pods show `CrashLoopBackOff`.
+MySQL should run on the dedicated `mysql-pool` node. If it OOM-kills or crashes, symptoms include CTFd 500 errors, ProxySQL backend errors, or `CrashLoopBackOff`.
 
 ```bash
 # Check MySQL status
@@ -150,6 +185,7 @@ terraform -chdir=infra/terraform apply -auto-approve
 # 2. Deploy core CTFd stack — secrets and services first, then stateful components
 kubectl apply -f k8s/ctfd/secrets.local.yaml
 kubectl apply -f k8s/ctfd/services.yaml
+kubectl apply -f k8s/monitoring/metrics-server.yaml
 kubectl apply -f k8s/ctfd/mysql-statefulset.yaml
 kubectl apply -f k8s/ctfd/redis-deployment.yaml       # StatefulSet with 1Gi PVC + AOF
 kubectl apply -f k8s/ctfd/proxysql-configmap.yaml
@@ -171,7 +207,8 @@ kubectl apply -f k8s/ctfd/ingress.yaml
 kubectl cp backups/ctfd-backup-LATEST.sql ctfd/mysql-0:/tmp/restore.sql
 kubectl exec -i mysql-0 -n ctfd -- bash -c 'echo "SET FOREIGN_KEY_CHECKS=0;" | cat - /tmp/restore.sql | mysql -u root -p"$MYSQL_ROOT_PASSWORD" ctfd'
 
-# 6. Deploy MySQL read replica and configure GTID replication
+# 6. Deploy MySQL replica for recovery and configure GTID replication.
+# Do not enable ProxySQL read splitting during the event unless a fresh soak test passes.
 kubectl apply -f k8s/ctfd/mysql-replica-statefulset.yaml
 kubectl rollout status statefulset/mysql-replica -n ctfd
 bash scripts/setup-mysql-replication.sh
@@ -181,7 +218,7 @@ bash scripts/setup-mysql-replication.sh
 # 7. Deploy controller (create secret with correct key name)
 kubectl create secret generic controller-key --from-literal=CONTROLLER_KEY=<key> -n ctfd
 kubectl apply -f k8s/rbac/challenge-controller-rbac.yaml
-kubectl apply -f k8s/controller/api-deployment.yaml   # 8 replicas, 250m CPU request
+kubectl apply -f k8s/controller/api-deployment.yaml   # 4 replicas, 250m CPU request
 kubectl apply -f k8s/controller/daemon-deployment.yaml
 
 # 8. Apply CiliumNetworkPolicy for controller → kube-apiserver access
@@ -190,7 +227,7 @@ kubectl apply -f k8s/controller/daemon-deployment.yaml
 # 9. Pre-create challenge manifests ConfigMap, bulk spawn, import flags
 kubectl create configmap challenge-manifests --from-file=challenges/manifests/ -n ctfd --dry-run=client -o yaml | kubectl apply -f -
 kubectl rollout restart deployment/controller-api -n ctfd
-# Run bulk_spawn and import_flags via controller pod
+# Run bulk_spawn and import_flags via controller-provisioner, not controller-api
 ```
 
 **Notes on Redis after restore:**

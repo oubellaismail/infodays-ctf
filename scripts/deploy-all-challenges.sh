@@ -1,0 +1,277 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# deploy-all-challenges.sh — Batch deploy all challenge manifests.
+#
+# Much more reliable than running deploy-challenge.sh per challenge because:
+#   1. Creates/updates all CTFd challenges (HTTP only — no kubectl)
+#   2. Updates ConfigMap ONCE with all manifests
+#   3. Restarts controller ONCE
+#   4. Runs bulk_spawn ONCE
+#   5. Runs import_flags ONCE
+#
+# Usage:
+#   bash scripts/deploy-all-challenges.sh [manifests-dir]
+#
+# Required environment:
+#   CTFD_URL          — CTFd base URL (e.g., https://ctfd.infodays.net)
+#   CTFD_ADMIN_TOKEN  — CTFd admin API token
+#   CTF_MASTER_SECRET — master secret for HMAC flag derivation (used for static artifact generation)
+#
+# Optional:
+#   REGISTRY           — DOCR registry prefix (default: registry.digitalocean.com/infodays-registry)
+#   CTFD_NAMESPACE     — namespace where controller runs (default: ctfd)
+#   CHALLENGE_NAMESPACE — namespace for challenge pods (default: challenges)
+
+CTFD_URL="${CTFD_URL:?ERROR: CTFD_URL not set}"
+CTFD_ADMIN_TOKEN="${CTFD_ADMIN_TOKEN:?ERROR: CTFD_ADMIN_TOKEN not set}"
+CTF_MASTER_SECRET="${CTF_MASTER_SECRET:?ERROR: CTF_MASTER_SECRET not set}"
+REGISTRY="${REGISTRY:-registry.digitalocean.com/infodays-registry}"
+
+CTFD_NAMESPACE="${CTFD_NAMESPACE:-ctfd}"
+CTFD_INTERNAL_URL="${CTFD_INTERNAL_URL:-http://ctfd-service.${CTFD_NAMESPACE}.svc.cluster.local}"
+MANIFESTS_DIR="${1:-challenges/manifests}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+info()  { echo "▸ $*"; }
+ok()    { echo "  ✔ $*"; }
+fail()  { echo "  ✘ $*" >&2; exit 1; }
+
+require_cmd() { command -v "$1" &>/dev/null || fail "$1 is required but not installed"; }
+require_cmd kubectl
+require_cmd python3
+require_cmd docker
+
+[ -d "$MANIFESTS_DIR" ] || fail "Manifests directory not found: $MANIFESTS_DIR"
+
+cd "$PROJECT_ROOT"
+
+# ---------------------------------------------------------------------------
+# Step 0: Generate static artifacts for all static challenges + all teams,
+#         then rebuild and push the static-files-server image.
+# ---------------------------------------------------------------------------
+info "Step 0: Generating static artifacts for all teams"
+
+# Collect all static challenge IDs from manifests
+STATIC_CHALLENGES=$(python3 - "$MANIFESTS_DIR" <<'PYEOF'
+import sys, glob, yaml, os
+d = sys.argv[1]
+ids = []
+for f in sorted(glob.glob(os.path.join(d, "*.yaml"))):
+    m = yaml.safe_load(open(f)) or {}
+    if m.get("type") == "static" and m.get("id"):
+        ids.append(m["id"])
+print(" ".join(ids))
+PYEOF
+)
+
+if [ -z "$STATIC_CHALLENGES" ]; then
+  ok "No static challenges found — skipping artifact generation"
+else
+  echo "  Static challenges: $STATIC_CHALLENGES"
+  for chal_id in $STATIC_CHALLENGES; do
+    echo "  Generating: $chal_id"
+    python3 "$SCRIPT_DIR/generate-static-artifacts.py" \
+      --ctfd-url "$CTFD_URL" \
+      --admin-token "$CTFD_ADMIN_TOKEN" \
+      --master-secret "$CTF_MASTER_SECRET" \
+      --challenges "$chal_id" 2>&1 | sed 's/^/    /'
+  done
+
+  info "Step 0b: Rebuilding and pushing static-files-server image"
+  docker build -f "$PROJECT_ROOT/Dockerfile.static-files" \
+    -t "${REGISTRY}/base:static-files" \
+    "$PROJECT_ROOT" 2>&1 | tail -3
+
+  docker push "${REGISTRY}/base:static-files" 2>&1 | tail -3
+
+  kubectl rollout restart deployment/static-files-server -n "$CTFD_NAMESPACE" >/dev/null
+  echo "  Waiting for static-files-server rollout..."
+  kubectl rollout status deployment/static-files-server -n "$CTFD_NAMESPACE" --timeout=60s
+  ok "Static artifacts deployed"
+fi
+
+# ---------------------------------------------------------------------------
+# Step 1: Ensure all CTFd challenges exist (pure HTTP, no kubectl)
+# ---------------------------------------------------------------------------
+info "Step 1: Creating/verifying all challenges in CTFd"
+
+python3 - "$MANIFESTS_DIR" "$CTFD_URL" "$CTFD_ADMIN_TOKEN" <<'PYEOF'
+import sys, os, json, urllib.request, urllib.error, yaml, glob
+
+manifests_dir = sys.argv[1]
+ctfd_url = sys.argv[2]
+token = sys.argv[3]
+
+def api(path, method="GET", body=None):
+    req = urllib.request.Request(
+        f"{ctfd_url}{path}",
+        data=json.dumps(body).encode() if body else None,
+        headers={"Authorization": f"Token {token}", "Content-Type": "application/json"},
+        method=method
+    )
+    resp = urllib.request.urlopen(req, timeout=15)
+    return json.loads(resp.read())
+
+# Fetch existing challenges
+existing = {}
+data = api("/api/v1/challenges?per_page=200")
+for ch in data.get("data", []):
+    existing[ch["name"]] = ch["id"]
+
+manifest_files = sorted(glob.glob(os.path.join(manifests_dir, "*.yaml")))
+created = 0
+skipped = 0
+
+# Expand manifests into CTFd entries.
+# Bundle manifests → ONE entry with type=multi_flag (cumulative per-flag scoring).
+# Single-flag manifests → ONE entry with type=dynamic.
+entries = []
+for fpath in manifest_files:
+    with open(fpath) as f:
+        m = yaml.safe_load(f)
+    if not m:
+        print(f"  SKIP (empty/invalid yaml): {fpath}")
+        continue
+    if "flags" in m:
+        # Bundle manifest — ONE CTFd entry for the whole challenge
+        entries.append({
+            "name": m.get("name", ""),
+            "category": m.get("category", ""),
+            "description": m.get("description", f"Challenge: {m.get('name', '')}"),
+            "initial": int(m.get("initial", 500)),
+            "minimum": int(m.get("minimum", 50)),
+            "decay": int(m.get("decay", 25)),
+            "type": "multi_flag",
+        })
+    else:
+        entries.append({
+            "name": m.get("name", ""),
+            "category": m.get("category", ""),
+            "description": m.get("description", f"Challenge: {m.get('name', '')}"),
+            "initial": int(m.get("initial", 500)),
+            "minimum": int(m.get("minimum", 50)),
+            "decay": int(m.get("decay", 25)),
+            "type": "dynamic",
+        })
+
+for entry in entries:
+    name = entry["name"]
+    category = entry["category"]
+    if not name or not category:
+        print(f"  SKIP (missing name/category): {entry}")
+        continue
+
+    if name in existing:
+        print(f"  ✔ Already exists: {name} (id={existing[name]})")
+        skipped += 1
+    else:
+        try:
+            result = api("/api/v1/challenges", method="POST", body={
+                "name": name,
+                "category": category,
+                "description": entry["description"],
+                "value": entry["initial"],
+                "initial": entry["initial"],
+                "minimum": entry["minimum"],
+                "decay": entry["decay"],
+                "state": "visible",
+                "type": entry["type"],
+            })
+            cid = result["data"]["id"]
+            print(f"  ✔ Created: {name} (id={cid}, type={entry['type']})")
+            created += 1
+        except Exception as e:
+            print(f"  ✘ Failed to create {name}: {e}")
+
+print(f"\n  Summary: {created} created, {skipped} already existed")
+PYEOF
+
+ok "CTFd challenge sync complete"
+
+# ---------------------------------------------------------------------------
+# Step 2: Update ConfigMap with ALL manifests (one operation)
+# ---------------------------------------------------------------------------
+info "Step 2: Updating challenge-manifests ConfigMap"
+
+kubectl create configmap challenge-manifests \
+  --from-file="$MANIFESTS_DIR" \
+  -n "$CTFD_NAMESPACE" \
+  --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+ok "ConfigMap updated"
+
+# ---------------------------------------------------------------------------
+# Step 3: Restart controller ONCE and wait
+# ---------------------------------------------------------------------------
+info "Step 3: Restarting controller API (single restart)"
+
+kubectl rollout restart deployment/controller-api -n "$CTFD_NAMESPACE" >/dev/null
+echo "  Waiting for rollout (up to 3 min)..."
+kubectl rollout status deployment/controller-api -n "$CTFD_NAMESPACE" --timeout=180s || {
+  echo "  Rollout timeout — checking for at least one Running pod..."
+  READY=$(kubectl get pods -n "$CTFD_NAMESPACE" -l app=controller-api \
+    --field-selector=status.phase=Running -o jsonpath='{.items}')
+  [ "$READY" != "[]" ] || fail "No running controller-api pods after rollout timeout"
+  echo "  At least one pod is Running — continuing"
+}
+
+ok "Controller API restarted"
+
+# ---------------------------------------------------------------------------
+# Step 4: Run bulk_spawn ONCE for all service challenges
+# ---------------------------------------------------------------------------
+info "Step 4: Running bulk_spawn (all service challenges)"
+
+cleanup_provisioner() {
+  kubectl scale deployment/controller-provisioner -n "$CTFD_NAMESPACE" --replicas=0 >/dev/null 2>&1 || true
+}
+trap cleanup_provisioner EXIT
+
+kubectl apply -f "$PROJECT_ROOT/k8s/controller/provisioner-deployment.yaml" >/dev/null
+kubectl scale deployment/controller-provisioner -n "$CTFD_NAMESPACE" --replicas=1 >/dev/null
+kubectl rollout status deployment/controller-provisioner -n "$CTFD_NAMESPACE" --timeout=120s >/dev/null
+
+PROVISIONER_POD=$(kubectl get pods -n "$CTFD_NAMESPACE" -l app=controller-provisioner \
+  --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+
+[ -n "$PROVISIONER_POD" ] || fail "No running controller-provisioner pod found"
+echo "  Pod: $PROVISIONER_POD"
+
+kubectl exec -n "$CTFD_NAMESPACE" "$PROVISIONER_POD" -- \
+  env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
+  python3 /app/bulk_spawn.py \
+    --ctfd-url "$CTFD_INTERNAL_URL" \
+    --token "$CTFD_ADMIN_TOKEN" 2>&1 | while IFS= read -r line; do
+  echo "    $line"
+done
+
+ok "Bulk spawn complete"
+
+# ---------------------------------------------------------------------------
+# Step 5: Import flags ONCE for all challenges
+# ---------------------------------------------------------------------------
+info "Step 5: Importing flags for all challenges"
+
+kubectl exec -n "$CTFD_NAMESPACE" "$PROVISIONER_POD" -- \
+  env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
+  python3 /app/import_flags.py \
+    --ctfd-url "$CTFD_INTERNAL_URL" 2>&1 | while IFS= read -r line; do
+  echo "    $line"
+done
+
+ok "Flag import complete"
+
+# ---------------------------------------------------------------------------
+# Done
+# ---------------------------------------------------------------------------
+echo ""
+echo "======================================"
+echo " All challenges deployed"
+echo "======================================"
+echo "  CTFd:    $CTFD_URL"
+echo "  Manifests: $MANIFESTS_DIR"
+echo ""
+echo "Service challenges: check challenge URLs at $CTFD_URL"
+echo "Static challenges: players download per-team zip from CTFd modal"

@@ -1,0 +1,7 @@
+id: coach-formation
+name: "Coach Formation"
+category: Crypto
+type: static
+initial: 200
+minimum: 30
+decay: 20

@@ -20,12 +20,13 @@ from kubernetes.client.rest import ApiException
 
 # ─── Helpers to build fake K8s objects ──────────────────────────────────────
 
-def _make_deploy(name, team_id, challenge_id, replicas=0, activated_at=""):
+def _make_deploy(name, team_id, challenge_id, replicas=0, activated_at="", ready_replicas=None):
     d = MagicMock()
     d.metadata.name = name
     d.metadata.labels = {"team": team_id, "challenge": challenge_id, "managed-by": "ctf-controller"}
     d.metadata.annotations = {"ctf/activated-at": activated_at}
     d.spec.replicas = replicas
+    d.status.ready_replicas = replicas if ready_replicas is None and replicas == 1 else (ready_replicas or 0)
     return d
 
 
@@ -46,6 +47,9 @@ def _make_core_v1():
     cm = MagicMock()
     cm.data = {}
     core_v1.read_namespaced_config_map.return_value = cm
+    svc = MagicMock()
+    svc.spec.ports = [MagicMock(node_port=30080)]
+    core_v1.read_namespaced_service.return_value = svc
     return core_v1
 
 
@@ -198,14 +202,14 @@ class TestActivate:
         client, _ = make_client(apps_v1=apps_v1)
         r = client.post(
             "/activate",
-            json={"team_id": "3", "challenge_id": "web-sqli"},
+            json={"team_id": "3", "challenge_id": "haaland"},
             headers={"X-Controller-Key": KEY},
         )
         assert r.status_code == 200
         body = r.json()
         assert body["status"] == "starting"
-        # HTTP challenge should get a subdomain URL
-        assert "team-3-web-sqli.challenges.infodays.net" in (body["url"] or "")
+        # HTTP challenge should get a NodePort URL
+        assert body["url"] == "http://challenges.infodays.net:30080"
         # Verify patch was called with replicas=1
         call_args = apps_v1.patch_namespaced_deployment.call_args
         patch_body = call_args[0][2]

@@ -46,12 +46,53 @@ from kubernetes.client.models import (
     V1PodSecurityContext,
     V1Capabilities,
     V1SeccompProfile,
+    V1Probe,
+    V1TCPSocketAction,
 )
 
 from k8s_client import init_k8s_client
 from flag import derive_flag
 from manifest_loader import load_manifests
 from naming import deployment_name, secret_name, service_name, ingress_name, managed_labels
+
+
+def _flag_env_vars(team_id: str, challenge: dict) -> tuple[dict, list]:
+    """Build (secret_data, env_var_list) for a challenge's flags.
+
+    Single-flag manifest: {FLAG: derive_flag(team_id, id)}, [EnvVar FLAG]
+    Bundle manifest:      {FLAG1: ..., FLAG2: ...},          [EnvVar FLAG1, FLAG2, ...]
+    """
+    if "flags" in challenge:
+        secret_data = {
+            entry["env"]: derive_flag(team_id, entry["id"])
+            for entry in challenge["flags"]
+        }
+        env_vars = [
+            V1EnvVar(
+                name=entry["env"],
+                value_from=V1EnvVarSource(
+                    secret_key_ref=V1SecretKeySelector(
+                        name=secret_name(team_id, challenge["id"]),
+                        key=entry["env"],
+                    )
+                ),
+            )
+            for entry in challenge["flags"]
+        ]
+    else:
+        secret_data = {"FLAG": derive_flag(team_id, challenge["id"])}
+        env_vars = [
+            V1EnvVar(
+                name="FLAG",
+                value_from=V1EnvVarSource(
+                    secret_key_ref=V1SecretKeySelector(
+                        name=secret_name(team_id, challenge["id"]),
+                        key="FLAG",
+                    )
+                ),
+            )
+        ]
+    return secret_data, env_vars
 
 logger = logging.getLogger(__name__)
 
@@ -65,18 +106,31 @@ def fetch_teams(ctfd_url: str, admin_token: str) -> list[dict]:
         admin_token: CTFd admin API token
 
     Returns:
-        List of {id: str, name: str} dicts
+        List of active {id: str, name: str} dicts, excluding hidden/banned teams.
     """
     url = f"{ctfd_url}/api/v1/teams?per_page=100"
-    headers = {"Authorization": f"Token {admin_token}"}
+    # Content-Type required on all CTFd token-auth requests (including GETs);
+    # without it CTFd's token middleware skips auth and returns 302/500.
+    headers = {"Authorization": f"Token {admin_token}", "Content-Type": "application/json"}
 
     try:
         response = httpx.get(url, headers=headers, follow_redirects=True)
         response.raise_for_status()
         data = response.json()
         teams = data.get("data", [])
-        logger.info(f"Fetched {len(teams)} teams from CTFd")
-        return [{"id": str(t["id"]), "name": t.get("name", "")} for t in teams]
+        active_teams = [
+            {"id": str(t["id"]), "name": t.get("name", "")}
+            for t in teams
+            if not bool(t.get("banned")) and not bool(t.get("hidden"))
+        ]
+        skipped = len(teams) - len(active_teams)
+        logger.info(
+            "Fetched %s teams from CTFd (%s active, %s skipped hidden/banned)",
+            len(teams),
+            len(active_teams),
+            skipped,
+        )
+        return active_teams
     except Exception as e:
         logger.error(f"Failed to fetch teams: {e}")
         raise
@@ -97,13 +151,14 @@ def create_secret(core_v1: Any, team_id: str, challenge: dict) -> str:
     challenge_id = challenge["id"]
     sec_name = secret_name(team_id, challenge_id)
 
+    secret_data, _ = _flag_env_vars(team_id, challenge)
     body = V1Secret(
         metadata=V1ObjectMeta(
             name=sec_name,
             namespace="challenges",
             labels=managed_labels(team_id, challenge_id),
         ),
-        string_data={"FLAG": derive_flag(team_id, challenge_id)},
+        string_data=secret_data,
     )
 
     try:
@@ -133,31 +188,53 @@ def create_deployment(apps_v1: Any, team_id: str, challenge: dict) -> str:
     dep_name = deployment_name(team_id, challenge_id)
     labels = managed_labels(team_id, challenge_id)
 
+    _, env_vars = _flag_env_vars(team_id, challenge)
+    # container_port overrides port for the pod's actual listening port when
+    # the external service port differs (e.g. sshd on 22 exposed as port 2222).
+    container_port = challenge.get("container_port", challenge["port"])
+    all_ports = [V1ContainerPort(container_port=container_port)]
+    for extra in challenge.get("extra_ports", []):
+        all_ports.append(V1ContainerPort(container_port=extra["port"]))
+
     container = V1Container(
         name=challenge_id,
         image=challenge["image"],
-        ports=[V1ContainerPort(container_port=challenge["port"])],
-        env=[
-            V1EnvVar(
-                name="FLAG",
-                value_from=V1EnvVarSource(
-                    secret_key_ref=V1SecretKeySelector(
-                        name=secret_name(team_id, challenge_id),
-                        key="FLAG",
-                    )
-                ),
-            )
-        ],
+        image_pull_policy="Always",
+        ports=all_ports,
+        env=env_vars,
+        readiness_probe=V1Probe(
+            tcp_socket=V1TCPSocketAction(port=container_port),
+            initial_delay_seconds=5,
+            period_seconds=3,
+            failure_threshold=40,  # allows up to ~120s for slow-init challenges
+            success_threshold=1,
+        ),
         resources=V1ResourceRequirements(
             limits={"cpu": "0.5", "memory": challenge.get("memory_limit", "128Mi")},
             requests={"cpu": "0.05", "memory": "32Mi"},
         ),
         security_context=V1SecurityContext(
-            allow_privilege_escalation=False,
-            capabilities=V1Capabilities(drop=["ALL"]),
-            run_as_non_root=True,
-            run_as_user=1000,
+            allow_privilege_escalation=bool(challenge.get("allow_privilege_escalation", False)),
+            # run_as_root challenges need DAC_OVERRIDE + CHOWN to write system dirs as root;
+            # dropping ALL strips those even from uid 0.
+            # allow_privilege_escalation challenges also need SETUID/SETGID so suid binaries keep privs.
+            capabilities=V1Capabilities(
+                drop=["ALL"] if not challenge.get("run_as_root") else [],
+                add=["SETUID", "SETGID"] if challenge.get("allow_privilege_escalation") else [],
+            ),
+            **({} if challenge.get("run_as_root") else {
+                "run_as_non_root": True,
+                "run_as_user": 1000,
+            }),
         ),
+    )
+
+    pod_security_context = V1PodSecurityContext(
+        seccomp_profile=V1SeccompProfile(type="RuntimeDefault"),
+        **({} if challenge.get("run_as_root") else {
+            "run_as_non_root": True,
+            "run_as_user": 1000,
+        }),
     )
 
     body = V1Deployment(
@@ -174,11 +251,7 @@ def create_deployment(apps_v1: Any, team_id: str, challenge: dict) -> str:
                 metadata=V1ObjectMeta(labels=labels),
                 spec=V1PodSpec(
                     containers=[container],
-                    security_context=V1PodSecurityContext(
-                        run_as_non_root=True,
-                        run_as_user=1000,
-                        seccomp_profile=V1SeccompProfile(type="RuntimeDefault"),
-                    ),
+                    security_context=pod_security_context,
                 ),
             ),
         ),
@@ -218,9 +291,9 @@ def create_service(core_v1: Any, team_id: str, challenge: dict) -> str:
             labels=labels,
         ),
         spec=V1ServiceSpec(
-            type="NodePort" if challenge.get("type") == "tcp" else "ClusterIP",
+            type="NodePort" if challenge.get("type") in ("tcp", "http") else "ClusterIP",
             selector=labels,
-            ports=[V1ServicePort(port=challenge["port"], target_port=challenge["port"])],
+            ports=[V1ServicePort(port=challenge["port"], target_port=challenge.get("container_port", challenge["port"]))],
         ),
     )
 
@@ -260,8 +333,6 @@ def create_http_ingress(net_v1: Any, team_id: str, challenge: dict) -> str:
             annotations={
                 "cert-manager.io/cluster-issuer": "letsencrypt-prod",
                 "nginx.ingress.kubernetes.io/ssl-redirect": "true",
-                "nginx.ingress.kubernetes.io/auth-url": "http://ctfd-service.ctfd.svc.cluster.local/team-verify?host=$host",
-                "nginx.ingress.kubernetes.io/auth-signin": "https://ctfd.infodays.net/login",
             },
         ),
         spec=V1IngressSpec(
@@ -345,7 +416,10 @@ def add_tcp_entry(core_v1: Any, team_id: str, challenge: dict) -> tuple[str, int
 
 def spawn_one(clients: tuple[Any, Any, Any], team: dict, challenge: dict) -> dict:
     """
-    Spawn all K8s resources for one team × challenge pair.
+    Spawn K8s resources for one team × challenge pair (secret, deployment, service, HTTP ingress).
+
+    TCP ConfigMap entries are NOT created here — they must be added sequentially after
+    this parallel phase to avoid read-modify-write races on the tcp-services ConfigMap.
 
     Args:
         clients: Tuple of (apps_v1, core_v1, net_v1) API instances
@@ -366,14 +440,10 @@ def spawn_one(clients: tuple[Any, Any, Any], team: dict, challenge: dict) -> dic
         # Create deployment
         create_deployment(apps_v1, team_id, challenge)
 
-        # Create service
+        # Create service (NodePort for TCP, ClusterIP for HTTP)
         create_service(core_v1, team_id, challenge)
 
-        # Create ingress (HTTP) or TCP ConfigMap entry (TCP)
-        if challenge.get("type") == "http":
-            create_http_ingress(net_v1, team_id, challenge)
-        elif challenge.get("type") == "tcp":
-            add_tcp_entry(core_v1, team_id, challenge)
+        # No ingress for HTTP — uses NodePort + tcp-services (same as TCP)
 
         return {
             "team_id": team_id,
@@ -410,23 +480,29 @@ def main(ctfd_url: str, admin_token: str) -> None:
     teams = fetch_teams(ctfd_url, admin_token)
     logger.info(f"Fetched {len(teams)} teams")
 
-    # Load challenge manifests (all service challenges with per-team pods)
-    challenges = [c for c in load_manifests() if c["category"] in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}]
+    # Load challenge manifests (service challenges only — static/file challenges have no pods)
+    # Bundle manifests have no top-level category; include them if they have a flags list
+    # (bundle manifests are always service challenges by definition)
+    challenges = [c for c in load_manifests()
+                  if (c.get("category", "").lower() in {"web", "pwn", "misc", "crypto", "forensics", "reversing", "osint"}
+                      or "flags" in c)
+                  and c.get("type") != "static"]
     logger.info(f"Loaded {len(challenges)} service challenges")
 
-    # Submit all (team, challenge) pairs to ThreadPoolExecutor
-    futures = {}
     created = 0
     skipped = 0
     errors = 0
 
+    # Phase 1 (parallel): secret + deployment + service + HTTP ingress
+    # TCP challenges get secret/deployment/service here but NOT their ConfigMap entry.
+    logger.info("Phase 1: spawning pods/services/ingresses in parallel...")
+    futures = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         for team in teams:
             for challenge in challenges:
                 future = executor.submit(spawn_one, clients, team, challenge)
                 futures[future] = (team["id"], challenge["id"])
 
-        # Collect results as they complete
         for future in concurrent.futures.as_completed(futures, timeout=600):
             try:
                 result = future.result()
@@ -443,6 +519,34 @@ def main(ctfd_url: str, admin_token: str) -> None:
             except Exception as e:
                 errors += 1
                 logger.error(f"Exception collecting result: {e}")
+
+    # Phase 2 (sequential): TCP + HTTP ConfigMap entries — must NOT run in parallel.
+    # Parallel read-modify-write on tcp-services ConfigMap causes port collisions
+    # (validated: 10 parallel workers produced 43/100 entries instead of 100).
+    tcp_challenges = [c for c in challenges if c.get("type") in ("tcp", "http")]
+    if tcp_challenges:
+        logger.info(
+            f"Phase 2: registering TCP/HTTP ports sequentially "
+            f"({len(teams)} teams × {len(tcp_challenges)} service challenges)..."
+        )
+        tcp_created = 0
+        tcp_skipped = 0
+        for team in teams:
+            for challenge in tcp_challenges:
+                try:
+                    status, port = add_tcp_entry(core_v1, team["id"], challenge)
+                    if status == "created":
+                        tcp_created += 1
+                    else:
+                        tcp_skipped += 1
+                except Exception as e:
+                    errors += 1
+                    logger.error(
+                        f"Error adding TCP entry {team['id']}/{challenge['id']}: {e}"
+                    )
+        logger.info(
+            f"TCP ports: {tcp_created} registered, {tcp_skipped} already present"
+        )
 
     logger.info(f"Done: {created} created, {skipped} skipped, {errors} errors")
 

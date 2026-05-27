@@ -8,6 +8,15 @@ metadata:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
     nginx.ingress.kubernetes.io/app-root: /challenges
+    # Rate limiting — 20 req/s per IP, burst up to 3× before 429
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "3"
+    # Connection limit per IP — prevents slowloris/connection flood
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+    # Forward real client IP to CTFd for accurate tracking and account-sharing detection
+    nginx.ingress.kubernetes.io/use-forwarded-headers: "true"
+    nginx.ingress.kubernetes.io/forwarded-for-header: "X-Forwarded-For"
+    nginx.ingress.kubernetes.io/compute-full-forwarded-for: "true"
 spec:
   ingressClassName: nginx
   tls:

@@ -1,0 +1,38 @@
+---
+# ResourceQuota: hard ceiling on total resources consumed by all challenge pods.
+# Event profile: max 60 users, approximately 15 teams of 4, with a 4-active-pod
+# cap per team. The quota allows the expected 60 active pods plus burst headroom.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: challenges-quota
+  namespace: challenges
+spec:
+  hard:
+    pods: "100"
+    requests.cpu: "8"         # 60 pods × 0.05 CPU request = 3 cores; >2× headroom
+    requests.memory: "4Gi"    # 60 pods × 32Mi request = 1.9Gi; >2× headroom
+    limits.cpu: "50"          # 100 pods × 0.5 CPU limit
+    limits.memory: "16Gi"     # 100 pods × 128Mi default limit with room for larger challenges
+---
+# LimitRange: enforce per-pod defaults so any pod without explicit limits still gets bounded.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: challenges-limits
+  namespace: challenges
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "0.5"
+      memory: "128Mi"
+    defaultRequest:
+      cpu: "0.05"
+      memory: "32Mi"
+    max:
+      cpu: "1"
+      memory: "512Mi"
+    min:
+      cpu: "0.01"
+      memory: "16Mi"

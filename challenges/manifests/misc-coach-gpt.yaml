@@ -1,0 +1,25 @@
+id: coach-gpt
+name: "Coach GPT"
+category: Misc
+description: "An AI coaching assistant with a secret. Jailbreak it to get the first flag, then go deeper for exfiltration."
+initial: 600
+minimum: 90
+decay: 20
+image: registry.digitalocean.com/infodays-registry/challenges:coach-gpt
+port: 8080
+type: http
+flags:
+  - id: coach-gpt-1
+    name: "Coach GPT — Jailbreak"
+    category: Misc
+    env: FLAG_MID
+    initial: 200
+    minimum: 30
+    decay: 20
+  - id: coach-gpt-2
+    name: "Coach GPT — Exfil"
+    category: Misc
+    env: FLAG_HARD
+    initial: 400
+    minimum: 60
+    decay: 15

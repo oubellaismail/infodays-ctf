@@ -1,7 +1,0 @@
-id: crypto-hash
-name: "Crypto Hash"
-category: crypto
-image: registry.digitalocean.com/infodays-registry/base:crypto
-port: 8080
-type: http
-points: 200

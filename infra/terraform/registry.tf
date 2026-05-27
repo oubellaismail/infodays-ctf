@@ -1,7 +1,7 @@
 resource "digitalocean_container_registry" "infodays" {
-  name               = var.registry_name
+  name                   = var.registry_name
   subscription_tier_slug = var.registry_tier
-  region            = var.cluster_region
+  region                 = var.cluster_region
 }
 
 resource "digitalocean_container_registry_docker_credentials" "pull" {

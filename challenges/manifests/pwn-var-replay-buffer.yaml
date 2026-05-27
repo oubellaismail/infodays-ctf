@@ -1,0 +1,9 @@
+id: var-replay-buffer
+name: "VAR Replay Buffer"
+category: Pwn
+image: registry.digitalocean.com/infodays-registry/challenges:var-replay-buffer
+port: 1337
+type: tcp
+initial: 350
+minimum: 50
+decay: 15

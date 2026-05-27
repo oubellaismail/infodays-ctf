@@ -29,6 +29,8 @@ CTFD_ADMIN_TOKEN="${CTFD_ADMIN_TOKEN:?ERROR: CTFD_ADMIN_TOKEN not set}"
 CTF_MASTER_SECRET="${CTF_MASTER_SECRET:?ERROR: CTF_MASTER_SECRET not set}"
 
 CTFD_NAMESPACE="${CTFD_NAMESPACE:-ctfd}"
+# Internal URL used by kubectl exec commands (bulk_spawn/import_flags run inside the cluster)
+CTFD_INTERNAL_URL="${CTFD_INTERNAL_URL:-http://ctfd-service.${CTFD_NAMESPACE}.svc.cluster.local}"
 CHALLENGE_NAMESPACE="${CHALLENGE_NAMESPACE:-challenges}"
 MANIFESTS_DIR="${MANIFESTS_DIR:-challenges/manifests}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -71,17 +73,29 @@ CHALLENGE_TYPE="$(read_field type)"
 CHALLENGE_POINTS="$(read_field points)"
 CHALLENGE_PORT="$(read_field port)"
 CHALLENGE_IMAGE="$(read_field image)"
+CHALLENGE_DESC="$(read_field description)"
+CHALLENGE_INITIAL="$(read_field initial)"
+CHALLENGE_MINIMUM="$(read_field minimum)"
+CHALLENGE_DECAY="$(read_field decay)"
 
 [ -n "$CHALLENGE_ID" ]       || fail "Manifest missing 'id'"
 [ -n "$CHALLENGE_NAME" ]     || fail "Manifest missing 'name'"
 [ -n "$CHALLENGE_CATEGORY" ] || fail "Manifest missing 'category'"
 [ -n "$CHALLENGE_TYPE" ]     || fail "Manifest missing 'type'"
-[ -n "$CHALLENGE_POINTS" ]   || fail "Manifest missing 'points'"
-[ -n "$CHALLENGE_PORT" ]     || fail "Manifest missing 'port'"
-[ -n "$CHALLENGE_IMAGE" ]    || fail "Manifest missing 'image'"
+
+# Dynamic scoring defaults: 500 initial, 50 minimum, 25 solves to reach minimum
+CHALLENGE_INITIAL="${CHALLENGE_INITIAL:-500}"
+CHALLENGE_MINIMUM="${CHALLENGE_MINIMUM:-50}"
+CHALLENGE_DECAY="${CHALLENGE_DECAY:-25}"
+
+# Service challenges require image + port; static challenges do not
+if [ "$CHALLENGE_TYPE" != "static" ]; then
+  [ -n "$CHALLENGE_PORT" ]   || fail "Manifest missing 'port'"
+  [ -n "$CHALLENGE_IMAGE" ]  || fail "Manifest missing 'image'"
+fi
 
 info "Deploying challenge: $CHALLENGE_NAME ($CHALLENGE_ID)"
-echo "  category=$CHALLENGE_CATEGORY  type=$CHALLENGE_TYPE  port=$CHALLENGE_PORT  points=$CHALLENGE_POINTS"
+echo "  category=$CHALLENGE_CATEGORY  type=$CHALLENGE_TYPE  scoring=${CHALLENGE_INITIAL}→${CHALLENGE_MINIMUM} (decay=${CHALLENGE_DECAY})"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -120,16 +134,20 @@ for ch in data.get('data', []):
 if [ -n "$EXISTING" ]; then
   ok "Already exists in CTFd (id=$EXISTING)"
 else
-  # Create the challenge
+  # Create the challenge with dynamic scoring
+  DESC="${CHALLENGE_DESC:-Challenge: ${CHALLENGE_NAME}}"
   CTFD_CHALLENGE_ID=$(python3 -c "
-import json, urllib.request
+import json, urllib.request, sys
 body = json.dumps({
-    'name': '''${CHALLENGE_NAME}''',
-    'category': '${CHALLENGE_CATEGORY}',
-    'description': 'Challenge: ${CHALLENGE_NAME}',
-    'value': ${CHALLENGE_POINTS},
+    'name': sys.argv[1],
+    'category': sys.argv[2],
+    'description': sys.argv[3],
+    'value': int(sys.argv[4]),
+    'initial': int(sys.argv[4]),
+    'minimum': int(sys.argv[5]),
+    'decay': int(sys.argv[6]),
     'state': 'visible',
-    'type': 'standard'
+    'type': 'dynamic'
 }).encode()
 req = urllib.request.Request(
     '${CTFD_URL}/api/v1/challenges',
@@ -140,9 +158,69 @@ req = urllib.request.Request(
 resp = urllib.request.urlopen(req, timeout=10)
 data = json.loads(resp.read())
 print(data['data']['id'])
-")
+" "$CHALLENGE_NAME" "$CHALLENGE_CATEGORY" "$DESC" "$CHALLENGE_INITIAL" "$CHALLENGE_MINIMUM" "$CHALLENGE_DECAY")
   ok "Created in CTFd (id=$CTFD_CHALLENGE_ID)"
+  EXISTING="$CTFD_CHALLENGE_ID"
 fi
+
+# ===========================================================================
+# Static challenges: per-team zips served by plugin, team-derived flags
+# ===========================================================================
+if [ "$CHALLENGE_TYPE" = "static" ]; then
+
+  # ---- Step 3: Update ConfigMap (so import_flags picks up the manifest) ----
+  info "Step 3/5: Updating challenge-manifests ConfigMap"
+
+  kubectl create configmap challenge-manifests \
+    --from-file="$MANIFESTS_DIR" \
+    -n "$CTFD_NAMESPACE" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+  ok "ConfigMap updated"
+
+  # ---- Step 4: Restart controller API (to reload manifest cache) ----
+  info "Step 4/5: Restarting controller API"
+
+  kubectl rollout restart deployment/controller-api -n "$CTFD_NAMESPACE" >/dev/null
+  kubectl rollout status deployment/controller-api -n "$CTFD_NAMESPACE" --timeout=60s >/dev/null
+
+  ok "Controller API restarted"
+
+  # ---- Step 5: Import team-derived flag into CTFd ----
+  info "Step 5/5: Importing team-derived flag into CTFd"
+
+  CONTROLLER_POD=$(kubectl get pods -n "$CTFD_NAMESPACE" -l app=controller-api \
+    --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+
+  [ -n "$CONTROLLER_POD" ] || fail "No running controller-api pod found"
+
+  kubectl exec -n "$CTFD_NAMESPACE" "$CONTROLLER_POD" -- \
+    env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
+    python3 /app/import_flags.py \
+      --ctfd-url "$CTFD_INTERNAL_URL" 2>&1 | while IFS= read -r line; do
+    echo "    $line"
+  done
+
+  ok "Team-derived flag imported"
+
+  # ---- Summary ----
+  echo ""
+  echo "======================================"
+  echo " Static challenge deployed: $CHALLENGE_NAME"
+  echo "======================================"
+  echo "  ID:       $CHALLENGE_ID"
+  echo "  Category: $CHALLENGE_CATEGORY"
+  echo "  Type:     static (per-team file download)"
+  echo "  Scoring:  dynamic ($CHALLENGE_INITIAL → $CHALLENGE_MINIMUM, decay=$CHALLENGE_DECAY)"
+  echo "  Download: /download/$CHALLENGE_ID (plugin endpoint, per-team zip)"
+  echo ""
+  echo "Players download the file from the challenge modal (per-team zip with unique flag)."
+  exit 0
+fi
+
+# ===========================================================================
+# Service challenges: K8s pods + controller integration
+# ===========================================================================
 
 # ---------------------------------------------------------------------------
 # Step 3: Update challenge-manifests ConfigMap
@@ -171,16 +249,26 @@ ok "Controller API restarted"
 # ---------------------------------------------------------------------------
 info "Step 5/6: Running bulk_spawn (creating K8s resources for all teams)"
 
-# Run bulk_spawn inside the controller pod (it has K8s credentials and manifests)
-CONTROLLER_POD=$(kubectl get pods -n "$CTFD_NAMESPACE" -l app=controller-api \
+# Run bulk_spawn inside the on-demand provisioner pod. The controller API pod
+# keeps runtime-only RBAC and cannot read challenge secrets.
+cleanup_provisioner() {
+  kubectl scale deployment/controller-provisioner -n "$CTFD_NAMESPACE" --replicas=0 >/dev/null 2>&1 || true
+}
+trap cleanup_provisioner EXIT
+
+kubectl apply -f "$PROJECT_ROOT/k8s/controller/provisioner-deployment.yaml" >/dev/null
+kubectl scale deployment/controller-provisioner -n "$CTFD_NAMESPACE" --replicas=1 >/dev/null
+kubectl rollout status deployment/controller-provisioner -n "$CTFD_NAMESPACE" --timeout=120s >/dev/null
+
+PROVISIONER_POD=$(kubectl get pods -n "$CTFD_NAMESPACE" -l app=controller-provisioner \
   --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
 
-[ -n "$CONTROLLER_POD" ] || fail "No running controller-api pod found"
+[ -n "$PROVISIONER_POD" ] || fail "No running controller-provisioner pod found"
 
-kubectl exec -n "$CTFD_NAMESPACE" "$CONTROLLER_POD" -- \
+kubectl exec -n "$CTFD_NAMESPACE" "$PROVISIONER_POD" -- \
   env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
   python3 /app/bulk_spawn.py \
-    --ctfd-url "$CTFD_URL" \
+    --ctfd-url "$CTFD_INTERNAL_URL" \
     --token "$CTFD_ADMIN_TOKEN" 2>&1 | while IFS= read -r line; do
   echo "    $line"
 done
@@ -192,10 +280,10 @@ ok "Bulk spawn complete"
 # ---------------------------------------------------------------------------
 info "Step 6/6: Importing per-team flags into CTFd"
 
-kubectl exec -n "$CTFD_NAMESPACE" "$CONTROLLER_POD" -- \
+kubectl exec -n "$CTFD_NAMESPACE" "$PROVISIONER_POD" -- \
   env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
   python3 /app/import_flags.py \
-    --ctfd-url "$CTFD_URL" 2>&1 | while IFS= read -r line; do
+    --ctfd-url "$CTFD_INTERNAL_URL" 2>&1 | while IFS= read -r line; do
   echo "    $line"
 done
 
@@ -211,7 +299,7 @@ echo "======================================"
 echo "  ID:       $CHALLENGE_ID"
 echo "  Category: $CHALLENGE_CATEGORY"
 echo "  Type:     $CHALLENGE_TYPE"
-echo "  Points:   $CHALLENGE_POINTS"
+echo "  Scoring:  dynamic ($CHALLENGE_INITIAL → $CHALLENGE_MINIMUM, decay=$CHALLENGE_DECAY)"
 
 if [ "$CHALLENGE_TYPE" = "http" ]; then
   echo "  URL:      https://team-{ID}-${CHALLENGE_ID}.challenges.infodays.net"

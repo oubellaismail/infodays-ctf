@@ -1,0 +1,7 @@
+id: var-override
+name: "VAR Override"
+category: Crypto
+type: static
+initial: 500
+minimum: 75
+decay: 10

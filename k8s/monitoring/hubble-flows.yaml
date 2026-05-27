@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubble-flow-exporter
+  namespace: kube-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hubble-flow-exporter
+  template:
+    metadata:
+      labels:
+        app: hubble-flow-exporter
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: hubble
+        image: ghcr.io/digitalocean-packages/cilium:v1.19.1
+        command:
+        - /bin/sh
+        - -ec
+        - |
+          until hubble status \
+            --server hubble-relay.kube-system.svc.cluster.local:80 \
+            --request-timeout=12s; do
+            echo '{"cluster":"infodays-ctf","kind":"hubble_flow_exporter_status","status":"waiting_for_relay"}'
+            sleep 5
+          done
+
+          exec hubble observe \
+            --server hubble-relay.kube-system.svc.cluster.local:80 \
+            --follow \
+            --all-namespaces \
+            --output jsonpb \
+            --verdict FORWARDED \
+            --verdict DROPPED \
+            --verdict ERROR
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL

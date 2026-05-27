@@ -1,10 +1,17 @@
-# DEPRECATED: Superseded by k8s/rbac/challenge-controller-rbac.yaml — do not apply this file after Phase 5
+# DEPRECATED: Superseded by k8s/rbac/challenge-controller-rbac.yaml.
+# Kept as a safety mirror so applying this old path does not restore broad
+# runtime controller permissions.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: ctf-controller
   namespace: ctfd
-
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ctf-provisioner
+  namespace: ctfd
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -12,23 +19,31 @@ metadata:
   name: ctf-controller
   namespace: challenges
 rules:
-  # Deployments: create (bulk_spawn), get/list/patch (api + daemon)
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "create", "patch"]
-  # Secrets: create (bulk_spawn)
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["create"]
-  # Services: create (bulk_spawn)
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["create"]
-  # Ingresses: create (bulk_spawn)
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ctf-provisioner
+  namespace: challenges
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "patch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
-    verbs: ["create"]
-
+    verbs: ["get", "list", "create", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -43,20 +58,30 @@ roleRef:
   kind: Role
   apiGroup: rbac.authorization.k8s.io
   name: ctf-controller
-
 ---
-# Separate role for ingress-nginx namespace (TCP ConfigMap)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ctf-provisioner
+  namespace: challenges
+subjects:
+  - kind: ServiceAccount
+    name: ctf-provisioner
+    namespace: ctfd
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ctf-provisioner
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: ctf-controller-nginx
   namespace: ingress-nginx
 rules:
-  # ConfigMap: get/patch (bulk_spawn reads+patches tcp-services, api reads)
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "patch"]
-
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -65,7 +90,7 @@ metadata:
   namespace: ingress-nginx
 subjects:
   - kind: ServiceAccount
-    name: ctf-controller
+    name: ctf-provisioner
     namespace: ctfd
 roleRef:
   kind: Role

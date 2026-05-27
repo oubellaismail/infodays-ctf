@@ -1,7 +1,0 @@
-id: pwn-shellcode
-name: "Pwn Shellcode"
-category: pwn
-image: registry.digitalocean.com/infodays-registry/base:reversing
-port: 1337
-type: tcp
-points: 350

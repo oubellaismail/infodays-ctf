@@ -9,8 +9,8 @@ data:
 
     admin_variables=
     {
-        admin_credentials="admin:admin"
-        mysql_ifaces="0.0.0.0:6032"
+        admin_credentials="admin:PLACEHOLDER_ADMIN_PASSWORD"
+        mysql_ifaces="127.0.0.1:6032"
     }
 
     mysql_variables=
@@ -43,7 +43,9 @@ data:
         multiplexing=true
     }
 
-    # Hostgroup 0 = writer (primary), Hostgroup 1 = reader (replica)
+    # Hostgroup 0 = writer (primary), Hostgroup 1 = reader (replica).
+    # Keep write-intent SELECTs and plugin-owned tables on the writer; route
+    # ordinary SELECTs to the read-only replica.
     mysql_servers =
     (
         {
@@ -74,9 +76,10 @@ data:
     )
 
     # Read/write splitting rules:
-    # Rule 1: SELECT ... FOR UPDATE → writer (hostgroup 0) — these are write-intent reads
-    # Rule 2: All other SELECT → reader (hostgroup 1)
-    # Rule 3: Everything else (INSERT, UPDATE, DELETE) → writer (hostgroup 0)
+    # Rule 1: SELECT ... FOR UPDATE -> writer (write-intent reads)
+    # Rule 2: Plugin-owned tables -> writer (avoid stale plugin/control state)
+    # Rule 3: Other SELECTs -> reader
+    # Rule 4: Everything else -> writer
     mysql_query_rules =
     (
         {
@@ -89,12 +92,19 @@ data:
         {
             rule_id=2
             active=1
+            match_pattern="(multi_flag_components|multi_flag_solves|cheaters)"
+            destination_hostgroup=0
+            apply=1
+        },
+        {
+            rule_id=3
+            active=1
             match_pattern="^SELECT"
             destination_hostgroup=1
             apply=1
         },
         {
-            rule_id=3
+            rule_id=4
             active=1
             match_pattern=".*"
             destination_hostgroup=0
@@ -102,8 +112,7 @@ data:
         }
     )
 
-    # Replication hostgroups: ProxySQL monitors read_only flag and auto-shuns
-    # a replica that falls behind or gets promoted to writer.
+    # ProxySQL monitors read_only and keeps writer/reader hostgroups separated.
     mysql_replication_hostgroups =
     (
         {

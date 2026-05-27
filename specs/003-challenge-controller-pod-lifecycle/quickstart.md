@@ -136,7 +136,7 @@ curl -X POST http://localhost:5000/activate \
   -H "Content-Type: application/json" \
   -H "X-Controller-Key: local-dev-key-change-me" \
   -d '{"team_id": "999", "challenge_id": "test-web-sqli"}'
-# {"status": "starting", "url": "https://team-999-test-web-sqli.challenges.infodays.net"}
+# {"status": "starting", "url": "http://challenges.infodays.net:32569"}
 
 # Check status
 curl http://localhost:5000/status/999 \

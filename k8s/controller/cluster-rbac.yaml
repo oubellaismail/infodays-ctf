@@ -17,5 +17,5 @@ roleRef:
   name: ctf-controller-nodes
 subjects:
 - kind: ServiceAccount
-  name: ctf-controller
+  name: ctf-provisioner
   namespace: ctfd

@@ -1,0 +1,15 @@
+id: crypto-penalty-shootout
+name: "Penalty Shootout"
+category: Crypto
+description: |-
+  Morocco is hosting the 2030 World Cup! The referee has encrypted the match schedule using AES-CBC. The flag format is infodays{32_hex_characters} (42 bytes total).
+  
+  You can connect to the VAR system. It will tell you if a given ciphertext has valid padding or not. The referee's decision is final, but maybe you can trick the VAR...
+  
+  Connect to recover the secret match schedule and claim your flag!
+image: registry.digitalocean.com/infodays-registry/challenges:crypto-penalty-shootout
+port: 4444
+type: tcp
+initial: 400
+minimum: 75
+decay: 15

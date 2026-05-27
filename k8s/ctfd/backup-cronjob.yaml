@@ -1,0 +1,210 @@
+---
+# backup-cronjob.yaml
+#
+# Automated MySQL backup → DO Spaces every 30 minutes.
+#
+# Prerequisites (run once before applying):
+#
+#   kubectl create secret generic spaces-backup-credentials \
+#     --from-literal=AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+#     --from-literal=AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+#     -n ctfd
+#
+# Backups are written to:
+#   s3://infodays-ctf-tfstate/backups/ctfd-backup-YYYY-MM-DDTHH-MM-SSZ.sql.gz
+#
+# Retention: the cleanup job deletes backups older than 48 hours (96 files max).
+# The final event backup is tagged with "event-final" and excluded from cleanup.
+#
+# To force a manual backup at any time:
+#   kubectl create job --from=cronjob/mysql-backup manual-backup-$(date +%s) -n ctfd
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mysql-backup
+  namespace: ctfd
+automountServiceAccountToken: false
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mysql-backup
+  namespace: ctfd
+spec:
+  # Every 30 minutes
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      # Fail fast — don't retry forever if MySQL is down
+      backoffLimit: 2
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: mysql-backup
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: false  # mysql:8 runs as root internally
+            seccompProfile:
+              type: RuntimeDefault
+
+          # Phase 1: dump MySQL to a shared volume
+          initContainers:
+          - name: mysqldump
+            image: mysql:8
+            securityContext:
+              allowPrivilegeEscalation: false
+            env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ctfd-secrets
+                  key: MYSQL_ROOT_PASSWORD
+            - name: BACKUP_TIMESTAMP
+              value: ""  # set dynamically in command
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              TS=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
+              OUTFILE="/backup/ctfd-backup-${TS}.sql.gz"
+
+              echo "[backup] Waiting for MySQL to be ready..."
+              until mysqladmin ping -h mysql -u root -p"${MYSQL_ROOT_PASSWORD}" --silent 2>/dev/null; do
+                echo "[backup] MySQL not ready, retrying in 5s..."
+                sleep 5
+              done
+
+              echo "[backup] Starting mysqldump at ${TS}..."
+              mysqldump \
+                -h mysql \
+                -u root -p"${MYSQL_ROOT_PASSWORD}" \
+                --single-transaction \
+                --routines \
+                --triggers \
+                --set-gtid-purged=OFF \
+                ctfd \
+              | gzip -9 > "${OUTFILE}"
+
+              FILESIZE=$(wc -c < "${OUTFILE}")
+              if [[ "${FILESIZE}" -lt 500 ]]; then
+                echo "[backup] ERROR: dump suspiciously small (${FILESIZE} bytes)" >&2
+                exit 1
+              fi
+
+              echo "[backup] Dump complete: ${OUTFILE} (${FILESIZE} bytes)"
+              # Write filename to shared volume so upload container knows it
+              echo "${OUTFILE}" > /backup/latest_file
+            volumeMounts:
+            - name: backup-volume
+              mountPath: /backup
+            resources:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "500m"
+                memory: "256Mi"
+
+          # Phase 2: upload to DO Spaces and rotate old backups
+          containers:
+          - name: upload
+            image: amazon/aws-cli:2.17.52
+            securityContext:
+              allowPrivilegeEscalation: false
+            env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: spaces-backup-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: spaces-backup-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            - name: SPACES_ENDPOINT
+              value: "https://fra1.digitaloceanspaces.com"
+            - name: SPACES_BUCKET
+              value: "infodays-ctf-tfstate"
+            - name: BACKUP_PREFIX
+              value: "backups"
+            - name: RETENTION_HOURS
+              value: "48"
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              LOCALFILE=$(cat /backup/latest_file)
+              FILENAME=$(basename "${LOCALFILE}")
+              S3_KEY="${BACKUP_PREFIX}/${FILENAME}"
+              S3_URI="s3://${SPACES_BUCKET}/${S3_KEY}"
+
+              echo "[upload] Uploading ${FILENAME} → ${S3_URI}"
+              aws s3 cp "${LOCALFILE}" "${S3_URI}" \
+                --endpoint-url "${SPACES_ENDPOINT}" \
+                --no-progress
+
+              echo "[upload] Upload complete. Verifying..."
+              REMOTE_SIZE=$(aws s3 ls "${S3_URI}" \
+                --endpoint-url "${SPACES_ENDPOINT}" \
+                | awk '{print $3}')
+              LOCAL_SIZE=$(wc -c < "${LOCALFILE}")
+              if [[ "${REMOTE_SIZE}" != "${LOCAL_SIZE}" ]]; then
+                echo "[upload] ERROR: size mismatch (local=${LOCAL_SIZE}, remote=${REMOTE_SIZE})" >&2
+                exit 1
+              fi
+
+              echo "[upload] Verified. Remote size: ${REMOTE_SIZE} bytes."
+
+              # Rotate: delete backups older than RETENTION_HOURS
+              # Skip files tagged "event-final" or "pre-event"
+              echo "[rotate] Removing backups older than ${RETENTION_HOURS}h..."
+              CUTOFF=$(date -u -d "${RETENTION_HOURS} hours ago" +"%Y-%m-%dT%H-%M-%SZ" 2>/dev/null \
+                || date -u -v-${RETENTION_HOURS}H +"%Y-%m-%dT%H-%M-%SZ")  # macOS fallback
+
+              aws s3 ls "s3://${SPACES_BUCKET}/${BACKUP_PREFIX}/" \
+                --endpoint-url "${SPACES_ENDPOINT}" \
+              | awk '{print $4}' \
+              | grep -E "^ctfd-backup-[0-9]{4}" \
+              | while read -r fname; do
+                  # Skip protected backups
+                  [[ "${fname}" == *"event-final"* ]] && continue
+                  [[ "${fname}" == *"pre-event"* ]] && continue
+
+                  # Extract timestamp from filename: ctfd-backup-YYYY-MM-DDTHH-MM-SSZ.sql.gz
+                  FDATE=$(echo "${fname}" | grep -oE "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}-[0-9]{2}-[0-9]{2}Z")
+                  [[ -z "${FDATE}" ]] && continue
+
+                  if [[ "${FDATE}" < "${CUTOFF}" ]]; then
+                    echo "[rotate]   Deleting old backup: ${fname}"
+                    aws s3 rm "s3://${SPACES_BUCKET}/${BACKUP_PREFIX}/${fname}" \
+                      --endpoint-url "${SPACES_ENDPOINT}"
+                  fi
+                done
+
+              echo "[rotate] Done."
+            volumeMounts:
+            - name: backup-volume
+              mountPath: /backup
+            resources:
+              requests:
+                cpu: "50m"
+                memory: "64Mi"
+              limits:
+                cpu: "200m"
+                memory: "128Mi"
+
+          volumes:
+          - name: backup-volume
+            emptyDir: {}

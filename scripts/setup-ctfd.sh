@@ -43,7 +43,7 @@ CTFD_URL="${CTFD_URL:-}"
 CTFD_ADMIN_NAME="${CTFD_ADMIN_NAME:-admin}"
 CTFD_ADMIN_EMAIL="${CTFD_ADMIN_EMAIL:-admin@infodays.net}"
 CTFD_ADMIN_PASSWORD="${CTFD_ADMIN_PASSWORD:-}"
-CTFD_EVENT_NAME="${CTFD_EVENT_NAME:-InfoDays CTF}"
+CTFD_EVENT_NAME="${CTFD_EVENT_NAME:-}"
 CTFD_NAMESPACE="${CTFD_NAMESPACE:-ctfd}"
 TEAMS_CSV="${TEAMS_CSV:-}"
 INGRESS_IP="${INGRESS_IP:-}"
@@ -104,7 +104,7 @@ wait_for_ctfd() {
   while [[ $attempt -lt $max_attempts ]]; do
     attempt=$((attempt + 1))
     local http
-    http=$(curl -s -o /dev/null -w "%{http_code}" \
+    http=$(curl -sk -o /dev/null -w "%{http_code}" \
       "${CURL_RESOLVE_OPTS[@]+"${CURL_RESOLVE_OPTS[@]}"}" \
       "$CTFD_URL/healthcheck" || true)
     if [[ "$http" == "200" ]]; then
@@ -165,7 +165,7 @@ if [[ "$SETUP_HTTP" == "200" ]]; then
 
   if [[ -z "$CTFD_ADMIN_PASSWORD" ]]; then
     CTFD_ADMIN_PASSWORD=$(python3 -c "import secrets; print(secrets.token_urlsafe(16))")
-    echo "INFO: Generated admin password: $CTFD_ADMIN_PASSWORD"
+    echo "INFO: Generated admin password — saved to $ENV_FILE (value hidden from logs)"
   fi
 
   CTFD_POD=$(kubectl -n "$CTFD_NAMESPACE" get pods -l app=ctfd \
@@ -264,8 +264,8 @@ with app.app_context():
 
     echo ""
     echo "  Admin:    $CTFD_ADMIN_NAME <$CTFD_ADMIN_EMAIL>"
-    echo "  Password: $CTFD_ADMIN_PASSWORD"
-    echo "  Token:    $CTFD_ADMIN_TOKEN"
+    echo "  Password: (stored in $ENV_FILE — not shown)"
+    echo "  Token:    (stored in $ENV_FILE — not shown)"
     echo ""
 
     save_env_file
@@ -274,9 +274,20 @@ with app.app_context():
     # cache and still redirect API calls to /setup. Rolling restart clears it.
     echo "Restarting CTFd to flush config cache..."
     kubectl rollout restart deployment/ctfd -n "$CTFD_NAMESPACE"
-    kubectl rollout status deployment/ctfd -n "$CTFD_NAMESPACE" --timeout=180s
+    kubectl rollout status deployment/ctfd -n "$CTFD_NAMESPACE" --timeout=360s
     echo "CTFd restarted."
     echo ""
+
+    # Flush Redis memoize cache after restart — CTFd memoizes token lookups and
+    # other auth state in Redis. After rolling restart old cached entries from
+    # pre-restart pods can cause sporadic 401s. A FLUSHDB forces re-validation
+    # from MySQL on the next request. Safe to run: caches rebuild on demand.
+    REDIS_POD=$(kubectl -n "$CTFD_NAMESPACE" get pods -l app=redis \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    if [[ -n "$REDIS_POD" ]]; then
+      kubectl -n "$CTFD_NAMESPACE" exec "$REDIS_POD" -- redis-cli FLUSHDB >/dev/null 2>&1 || true
+      echo "INFO: Redis cache flushed (post-restart)"
+    fi
 
     wait_for_ctfd "CTFd (post-restart)"
 
@@ -316,8 +327,79 @@ apply_config "event name"   "{\"ctf_name\": \"$CTFD_EVENT_NAME\"}"
 apply_config "team mode"    '{"user_mode": "teams"}'
 apply_config "registration" '{"registration_visibility": "private"}'
 
+# Sync controller key if provided (plugin stores it as X_CONTROLLER_KEY in Configs table)
+if [[ -n "${CONTROLLER_KEY:-}" ]]; then
+  apply_config "controller key" "{\"X_CONTROLLER_KEY\": \"$CONTROLLER_KEY\"}"
+fi
+
 # ---------------------------------------------------------------------------
-# Step 5: Import teams (optional — only if TEAMS_CSV is set)
+# Step 5: Create / update CTFd pages (idempotent)
+# ---------------------------------------------------------------------------
+create_or_update_page() {
+  local route="$1" title="$2" content="$3" auth_required="${4:-false}"
+  # Check if the page already exists
+  local resp
+  resp=$(ctfd_api GET "/api/v1/pages?route=$route")
+  local existing_id=""
+  if [[ "$resp" == "200" ]]; then
+    existing_id=$(python3 -c "
+import json, sys
+data = json.load(open('$RESP_TMP'))
+pages = data.get('data', [])
+for p in pages:
+    if p.get('route') == '$route':
+        print(p['id'])
+        break
+" 2>/dev/null || true)
+  fi
+
+  local payload
+  payload=$(python3 -c "
+import json, sys
+print(json.dumps({
+    'title': sys.argv[1],
+    'route': sys.argv[2],
+    'content': sys.argv[3],
+    'draft': False,
+    'hidden': False,
+    'auth_required': sys.argv[4] == 'true'
+}))
+" "$title" "$route" "$content" "$auth_required")
+
+  if [[ -n "$existing_id" ]]; then
+    resp=$(ctfd_api PATCH "/api/v1/pages/$existing_id" "$payload")
+    if [[ "$resp" =~ ^20[0-9]$ ]]; then
+      echo "  Updated page: /$route (id=$existing_id)"
+    else
+      echo "  WARNING: Failed to update page /$route (HTTP $resp)" >&2
+      cat "$RESP_TMP" >&2
+    fi
+  else
+    resp=$(ctfd_api POST "/api/v1/pages" "$payload")
+    if [[ "$resp" =~ ^20[0-9]$ ]]; then
+      echo "  Created page: /$route"
+    else
+      echo "  WARNING: Failed to create page /$route (HTTP $resp)" >&2
+      cat "$RESP_TMP" >&2
+    fi
+  fi
+}
+
+echo "Creating CTFd pages..."
+
+# Rules page — HTML content loaded from plugin assets
+RULES_HTML_FILE="$(cd "$(dirname "$0")/.." && pwd)/ctfd-plugin/assets/rules.html"
+if [[ -f "$RULES_HTML_FILE" ]]; then
+  RULES_CONTENT=$(cat "$RULES_HTML_FILE")
+  create_or_update_page "rules" "Rules" "$RULES_CONTENT" "false"
+else
+  echo "  WARNING: rules.html not found at $RULES_HTML_FILE — skipping rules page"
+fi
+
+echo "Creating CTFd pages... OK"
+
+# ---------------------------------------------------------------------------
+# Step 6: Import teams (optional — only if TEAMS_CSV is set)
 # ---------------------------------------------------------------------------
 if [[ -n "$TEAMS_CSV" ]]; then
   if [[ ! -f "$TEAMS_CSV" ]]; then
@@ -336,6 +418,5 @@ fi
 echo ""
 echo "Setup complete."
 echo "  URL:   $CTFD_URL"
-echo "  Token: $CTFD_ADMIN_TOKEN"
-echo "  Creds: $ENV_FILE"
+echo "  Creds: $ENV_FILE (token and password stored there — not shown)"
 exit 0

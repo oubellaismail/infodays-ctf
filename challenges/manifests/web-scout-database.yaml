@@ -1,0 +1,9 @@
+id: scout-database
+name: "Scout Database"
+category: Web
+image: registry.digitalocean.com/infodays-registry/challenges:scout-database
+port: 8080
+type: http
+initial: 300
+minimum: 50
+decay: 20

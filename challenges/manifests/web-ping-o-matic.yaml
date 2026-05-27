@@ -1,0 +1,9 @@
+id: ping-o-matic
+name: "Ping-o-Matic"
+category: Web
+image: registry.digitalocean.com/infodays-registry/challenges:ping-o-matic
+port: 8080
+type: http
+initial: 300
+minimum: 50
+decay: 20

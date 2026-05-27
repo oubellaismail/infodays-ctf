@@ -1,0 +1,13 @@
+id: haaland
+name: "Haaland"
+category: Web
+description: "Erling Haaland runs the Golden Boot Registry off a single anvil chain: one UUPS-upgradeable kernel behind a proxy. Pass-holders are the only accounts allowed to upgrade. Get GoldenBootClaimed emitted."
+image: registry.digitalocean.com/infodays-registry/challenges:haaland
+port: 8080
+type: http
+extra_ports:
+  - name: rpc
+    port: 8545
+initial: 1500
+minimum: 200
+decay: 10

@@ -11,8 +11,11 @@ This contract defines the complete authoritative allowlist for both namespaces. 
 
 | Direction | From | To | Ports | Condition |
 |-----------|------|----|-------|-----------|
-| Ingress | Pods in `ingress-nginx` namespace | All challenge pods | 8080/TCP, 1337/TCP, 4444/TCP | Always |
+| Ingress | Pods in `ingress-nginx` namespace | All challenge pods | 8080/TCP, 1337/TCP, 4444/TCP | Always (via ingress) |
+| Ingress | Any source (NodePort / kube-proxy) | All challenge pods | 8080/TCP, 1337/TCP, 4444/TCP | Always (direct NodePort) |
 | Egress | All challenge pods | Pods in `kube-system` namespace | 53/UDP, 53/TCP | Always (DNS) |
+
+> **Note on NodePort ingress**: HTTP (8080), TCP pwn (1337), and misc (4444) challenges all use NodePort directly via `challenges.infodays.net:{port}`. NodePort traffic originates from kube-proxy on the node itself — not from the `ingress-nginx` namespace — so a separate no-source-selector policy (`allow-nodeport-to-challenges`) is required. Without it, `default-deny-all` silently drops all direct NodePort connections.
 
 **Everything else is BLOCKED**, including:
 - Challenge pod → ctfd namespace (any port)
@@ -20,7 +23,7 @@ This contract defines the complete authoritative allowlist for both namespaces. 
 - Challenge pod → 10.96.0.1/32:443 (Kubernetes API)
 - Challenge pod → 169.254.169.254/32 (DigitalOcean metadata)
 - Challenge pod → any external IP
-- External → challenge pod (except via ingress-nginx)
+- External → challenge pod on any port outside 8080, 1337, 4444
 
 ---
 
@@ -56,6 +59,7 @@ This contract defines the complete authoritative allowlist for both namespaces. 
 |-------------|-----------|------------------------|
 | `default-deny-all` | challenges | `infra/terraform/network-policies.tf` + `k8s/network-policies/challenges-default-deny.yaml` |
 | `allow-ingress-to-challenges` | challenges | `infra/terraform/network-policies.tf` + `k8s/network-policies/challenges-allow-ingress.yaml` |
+| `allow-nodeport-to-challenges` | challenges | `k8s/network-policies/challenges-allow-nodeport.yaml` (ports 8080, 1337, 4444; no source selector) |
 | `allow-challenges-egress-dns` | challenges | `infra/terraform/network-policies.tf` + `k8s/network-policies/challenges-allow-dns.yaml` |
 | `default-deny-all` | ctfd | `infra/terraform/network-policies.tf` + `k8s/network-policies/ctfd-default-deny.yaml` |
 | `allow-ingress-to-ctfd` | ctfd | `infra/terraform/network-policies.tf` + `k8s/network-policies/ctfd-allow-internal.yaml` |
@@ -66,3 +70,5 @@ This contract defines the complete authoritative allowlist for both namespaces. 
 | `allow-ctfd-egress-dns` | ctfd | `k8s/ctfd/networkpolicy.yaml` + `k8s/network-policies/ctfd-allow-internal.yaml` |
 | `allow-controller-egress-k8s-api` | ctfd | `k8s/ctfd/networkpolicy.yaml` + `k8s/network-policies/ctfd-allow-controller-egress.yaml` |
 | `allow-ctfd-egress-internet` | ctfd | `infra/terraform/network-policies.tf` (UPDATE scope) + `k8s/network-policies/ctfd-allow-controller-egress.yaml` |
+| `allow-controller-egress-ctfd` | ctfd | `k8s/ctfd/networkpolicy.yaml` (controller → ctfd pods on 8000) |
+| `allow-ctfd-ingress-controller` | ctfd | `k8s/ctfd/networkpolicy.yaml` (ctfd pods accept from controller on 8000) |

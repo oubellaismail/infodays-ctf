@@ -1,7 +1,0 @@
-id: pwn-bof
-name: "Pwn BoF"
-category: pwn
-image: registry.digitalocean.com/infodays-registry/base:pwn
-port: 1337
-type: tcp
-points: 250

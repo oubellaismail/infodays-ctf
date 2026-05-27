@@ -19,9 +19,12 @@ letsencrypt_email = "ops@infodays.net"
 # Optional: Override defaults below if needed
 # cluster_name          = "infodays-ctf"
 # cluster_region        = "fra1"
-# cluster_version       = "1.28"
+# cluster_version       = "1.35.1-do.2" # pin during event windows
 # node_size             = "s-4vcpu-8gb"
-# node_count            = 4
+# node_min              = 4
+# node_max              = 4
+# challenge_nodeport_source_addresses = ["0.0.0.0/0", "::/0"]
+# kubernetes_api_cidrs  = ["10.114.32.1/32", "100.65.0.227/32"]
 # registry_name         = "infodays-registry"
 # registry_tier         = "starter"
 # use_letsencrypt_staging = false

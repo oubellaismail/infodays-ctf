@@ -24,9 +24,10 @@
 13. [Phase 5 — Network Hardening & Isolation](#phase-5--network-hardening--isolation)
 14. [Phase 6 — Event Readiness & Runbook](#phase-6--event-readiness--runbook)
 15. [Phase 7 — 100-Team Scaling (400 VUs)](#phase-7--100-team-scaling-400-vus)
-16. [Time Estimates](#16-time-estimates)
-17. [Risk Register](#17-risk-register)
-18. [Glossary](#18-glossary)
+16. [Phase 8 — CTFd Branding & UI Polish](#phase-8--ctfd-branding--ui-polish)
+17. [Time Estimates](#17-time-estimates)
+18. [Risk Register](#18-risk-register)
+19. [Glossary](#19-glossary)
 
 ---
 
@@ -44,7 +45,7 @@
 | Teams | 20–50 baseline, up to 100 with Phase 7 scaling |
 | Players per team | Max 4 — all sharing one CTFd team account |
 | CTFd registration | Admin pre-creates all team accounts before event start |
-| CTFd branding | TBD — default theme used until confirmed |
+| CTFd branding | Phase 8 — Infodays brand identity (Inter + JetBrains Mono, dark/light palette, logo) |
 
 ---
 
@@ -344,6 +345,7 @@ If a team's pod is auto-suspended while they're actively working, they simply cl
 | 5 | Network Hardening & Isolation | NetworkPolicies, RBAC, LimitRange, PodSecurity | Phase 2, 3, 4 |
 | 6 | Event Readiness & Runbook | Load test, pre-event checklist, operations runbook | All phases |
 | 7 | 100-Team Scaling (400 VUs) | ProxySQL, dedicated MySQL node, CTFd scale-out, 400-VU validation | Phase 6 |
+| 8 | CTFd Branding & UI Polish | Infodays brand applied: color tokens, fonts, logo, dark/light mode, plugin UI redesign | Phase 3 |
 
 ---
 
@@ -1607,7 +1609,101 @@ Out of scope: MySQL read replicas, Redis clustering, CDN, monitoring/alerting.
 
 ---
 
-## 16. Time Estimates
+## Phase 8 — CTFd Branding & UI Polish
+
+### Objective
+
+Apply the Infodays brand identity to the CTFd platform. Replace the default Bootstrap appearance and hardcoded inline styles in the CTFd plugin with a proper design system: CSS custom properties mapped to the dark and light color palettes, Inter + JetBrains Mono typography, the Infodays logo in the header, and a polished challenge instance manager UI that responds to CTFd's built-in `data-bs-theme` dark/light switching. The aesthetic target is HackTheBox — competitive, technical, sharp. No infrastructure changes in this phase.
+
+### Design assets
+
+All design assets are pre-defined and ready in `specs/design/`:
+- Color tokens: `specs/design/colors.md` — full dark and light palettes
+- Logo (dark mode): `ctfd-plugin/assets/logo-dark.png` — glowing white wordmark
+- Logo (light mode): `ctfd-plugin/assets/logo-light.png` — solid wordmark
+- Design constitution: `.impeccable.md` — personality, typography, principles
+- Fonts: Inter (body/UI) + JetBrains Mono (code/flags/data) via Google Fonts CDN
+
+### Spec Kit `/specify` prompt
+
+```
+/specify
+Project: InfoDays CTF on DigitalOcean — Phase 8: CTFd Branding & UI Polish.
+
+Apply the Infodays brand identity to the CTFd platform. All design decisions are
+pre-defined in .impeccable.md (personality, principles) and specs/design/colors.md
+(full dark + light token palettes). Reference both files throughout.
+
+Platform constraints:
+- CTFd is a Flask app using Bootstrap 5 — we do NOT modify CTFd source code
+- The CTFd plugin (ctfd-plugin/) is our only injection point
+- Plugin Blueprint serves static assets from ctfd-plugin/assets/
+- __init__.py uses CTFd.utils.plugins.register_script() to inject JS
+- Dark/light switching: CTFd sets data-bs-theme="dark|light" on <html>
+- Vanilla JS only — no build step, no bundler, no npm
+
+Scope of changes:
+
+1. CSS design system (ctfd-plugin/assets/style.css) — NEW FILE:
+   - Map all color tokens from specs/design/colors.md to CSS custom properties
+     using Bootstrap 5 variable names (--bs-body-bg, --bs-body-color, etc.)
+   - Separate [data-bs-theme="dark"] and [data-bs-theme="light"] blocks
+   - Override Bootstrap component defaults: cards, modals, badges, buttons, inputs
+   - Typography: @import Inter + JetBrains Mono from Google Fonts CDN
+     OR inject <link> in __init__.py — choose whichever avoids FOUC
+   - Base font: Inter, 14px, 1.5 line-height
+   - Code/data elements (flags, ports, IPs, nc commands): JetBrains Mono
+   - Status label typography: 11px, uppercase, letter-spacing: 0.04em
+
+2. Plugin JS rewrite (ctfd-plugin/assets/plugin.js) — UPDATE EXISTING:
+   - Remove ALL inline style.cssText and style.property assignments
+   - Replace with CSS class names defined in style.css
+   - Status badge classes: .ctf-badge--running, .ctf-badge--suspended,
+     .ctf-badge--fresh, .ctf-badge--error
+   - Instance URL: class .ctf-instance-url for http links
+   - NC command: class .ctf-nc-command for monospace tcp display
+   - Container: class .ctf-controller-ui
+   - No color values in JS — all appearance is CSS-driven
+
+3. Logo injection (ctfd-plugin/assets/plugin.js or __init__.py):
+   - Inject Infodays logo into CTFd navbar
+   - Dark mode: logo-dark.png; light mode: logo-light.png
+   - Switch logo src when data-bs-theme changes (MutationObserver on <html>)
+   - Logo served from plugin Blueprint static path
+
+4. Plugin stylesheet injection (ctfd-plugin/__init__.py) — UPDATE EXISTING:
+   - Register style.css via Blueprint static + inject <link> tag
+   - Register Google Fonts CDN link for Inter + JetBrains Mono
+   - Use register_script() for JS; use a similar approach for CSS
+
+Out of scope: CTFd template overrides, custom theme files, scoreboard redesign,
+challenge page layout changes beyond the controller UI panel.
+```
+
+### Deliverables
+
+- [ ] `ctfd-plugin/assets/style.css` — CSS custom properties for both modes, Bootstrap overrides, component classes
+- [ ] `ctfd-plugin/assets/plugin.js` — Updated: CSS classes replace all inline styles, logo injection with theme switching
+- [ ] `ctfd-plugin/__init__.py` — Updated: injects style.css + Google Fonts CDN link
+- [ ] `specs/design/colors.md` — Already complete (dark + light palettes)
+- [ ] `specs/design/logo-dark.png` — Already in place
+- [ ] `specs/design/logo-light.png` — Already in place
+- [ ] `.impeccable.md` — Already complete (design constitution)
+
+### Definition of Done
+
+- [ ] CTFd platform renders with Infodays dark color palette by default
+- [ ] Switching to light mode (via CTFd settings or `data-bs-theme`) applies light palette correctly
+- [ ] Challenge instance manager panel uses CSS classes — zero inline color values remain in plugin.js
+- [ ] Status badges (Running / Suspended / Fresh / Error) render in brand colors
+- [ ] Instance URL (HTTP) and nc command (TCP) use JetBrains Mono
+- [ ] Body text and UI labels render in Inter
+- [ ] Infodays logo appears in CTFd navbar; swaps between dark/light variants on theme change
+- [ ] No visual regressions on challenge submission, scoreboard, or team pages
+
+---
+
+## 17. Time Estimates
 
 | Phase | With Claude Code + Spec Kit |
 |---|---|
@@ -1618,7 +1714,8 @@ Out of scope: MySQL read replicas, Redis clustering, CDN, monitoring/alerting.
 | Phase 5 — Network Hardening | 1–2 hours |
 | Phase 6 — Event Readiness & Runbook | 1–2 hours |
 | Phase 7 — 100-Team Scaling | 3–5 hours |
-| **Total implementation** | **~14–22 hours** |
+| Phase 8 — CTFd Branding & UI Polish | 1–2 hours |
+| **Total implementation** | **~15–24 hours** |
 | Manual testing, dry run, challenge content | ~4–6 hours |
 | **Full project** | **~3–4 working days** |
 

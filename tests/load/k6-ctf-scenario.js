@@ -2,11 +2,12 @@ import http from 'k6/http';
 import { check, sleep } from 'k6';
 
 // Load test configuration
-// 4 VUs per team account — simulates 4 team members browsing simultaneously.
-// 50 teams × 4 members = 200 VUs total (Phase 7: 50-team scaling with ProxySQL).
+// One VU per player account. Each account carries its CTFd numeric team_id so
+// controller activate/status requests still target the correct team resources.
+// 15 teams × up to 4 players = 60 VUs total for the 12-hour event-safe profile.
 export const options = {
-  vus: 200,
-  duration: '45m',
+  vus: 60,
+  duration: '90m',
   thresholds: {
     http_req_duration: ['p(95)<3000'],  // p95 response time < 3000ms
     http_req_failed:   ['rate<0.01'],   // error rate < 1%
@@ -18,21 +19,26 @@ const BASE_URL            = __ENV.K6_CTF_BASE_URL           || 'https://ctfd.inf
 const CHALLENGE_ID        = parseInt(__ENV.K6_CTF_CHALLENGE_ID || '1', 10);
 const MANIFEST_CHALLENGE  = __ENV.K6_CTF_MANIFEST_CHALLENGE  || 'web-sqli';
 
-// Team credentials — loaded from K6_CTF_TEAMS as JSON array, or single account fallback.
-// Format: '[{"username":"Alpha Squad","password":"AlphaPass123","team_id":"1"},...]'
+// Player credentials — loaded from K6_CTF_TEAMS as JSON array, or single account fallback.
+// Format: '[{"username":"player1","password":"PlayerPass123","team_id":"1","team_name":"Alpha Squad"},...]'
 // team_id must match the CTFd numeric team ID so activate/status use correct K8s deployments.
-// Each VU picks a team by index so concurrent VUs use different accounts.
-let TEAMS;
+// Each VU picks one player account by index. If vus > accounts, accounts wrap.
+let ACCOUNTS;
 if (__ENV.K6_CTF_TEAMS) {
-  TEAMS = JSON.parse(__ENV.K6_CTF_TEAMS);
+  ACCOUNTS = JSON.parse(__ENV.K6_CTF_TEAMS);
 } else if (__ENV.K6_CTF_USERNAME && __ENV.K6_CTF_PASSWORD) {
-  TEAMS = [{
+  ACCOUNTS = [{
     username: __ENV.K6_CTF_USERNAME,
     password: __ENV.K6_CTF_PASSWORD,
     team_id:  __ENV.K6_CTF_TEAM_ID || '1',
+    team_name: __ENV.K6_CTF_TEAM_NAME || '',
   }];
 } else {
   throw new Error('Set K6_CTF_TEAMS (JSON array) or K6_CTF_USERNAME + K6_CTF_PASSWORD');
+}
+
+if (!Array.isArray(ACCOUNTS) || ACCOUNTS.length === 0) {
+  throw new Error('K6_CTF_TEAMS must contain at least one player account');
 }
 
 // Per-VU state: set once on first iteration, reused for all subsequent ones.
@@ -57,11 +63,13 @@ function persistSessionCookie() {
 function ensureLoggedIn(team) {
   if (vuLoggedIn) return;
 
-  // Stagger initial VU startup: spread 50 teams over 50 seconds (1s per team).
-  // Simulates teams trickling in at event start rather than all logging in simultaneously.
-  // 4 VUs per team share the same stagger so they log in together as a team.
+  // Stagger initial VU startup by team where possible. Multiple players from
+  // the same team start together, while teams trickle in over the first seconds.
   if (vuSessionCookie === null) {
-    sleep(Math.floor((__VU - 1) / 4) * 1.0);
+    const staggerIndex = team.team_index !== undefined
+      ? Number(team.team_index)
+      : Math.floor((__VU - 1) / 4);
+    sleep(staggerIndex * 1.0);
   }
 
   // GET login page to extract the form CSRF nonce
@@ -78,6 +86,7 @@ function ensureLoggedIn(team) {
     password: team.password,
     nonce: vuCsrfNonce,
   }, {
+    redirects: 0,
     responseCallback: http.expectedStatuses({ min: 200, max: 399 }, 429),
   });
   const loginOk = check(loginRes, {
@@ -104,8 +113,8 @@ function ensureLoggedIn(team) {
 // Main test function — executes once per VU iteration.
 // Login happens only on the first call; subsequent calls go straight to the scenario.
 export default function () {
-  // 4 VUs share the same team account (simulates 4 members per team)
-  const team = TEAMS[Math.floor((__VU - 1) / 4) % TEAMS.length];
+  // One VU maps to one player account; accounts wrap if vus exceeds account count.
+  const team = ACCOUNTS[(__VU - 1) % ACCOUNTS.length];
 
   // Re-inject session cookie BEFORE any request (k6 clears session cookies each iteration)
   persistSessionCookie();

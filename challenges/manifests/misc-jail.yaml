@@ -1,7 +1,0 @@
-id: misc-jail
-name: "Misc Jail"
-category: misc
-image: registry.digitalocean.com/infodays-registry/base:misc
-port: 4444
-type: tcp
-points: 200

@@ -1,7 +1,0 @@
-id: web-xss
-name: "Web XSS"
-category: web
-image: registry.digitalocean.com/infodays-registry/base:web
-port: 8080
-type: http
-points: 150

@@ -1,0 +1,29 @@
+id: batistuta
+name: "Batistuta"
+category: Web
+description: >-
+  Internal scouting platform for the Batistuta squad: a status panel, a wiki
+  with pipeline docs, a webhook pipeline, a restic backup endpoint, and two
+  password-gated vaults. Break the whole chain.
+image: registry.digitalocean.com/infodays-registry/challenges:batistuta
+port: 8080
+type: http
+memory_limit: "512Mi"
+initial: 800
+minimum: 100
+decay: 12
+flags:
+  - id: batistuta-user
+    name: "Batistuta — User"
+    category: Web
+    env: FLAG1
+    initial: 300
+    minimum: 40
+    decay: 20
+  - id: batistuta-root
+    name: "Batistuta — Root"
+    category: Web
+    env: FLAG2
+    initial: 500
+    minimum: 60
+    decay: 12

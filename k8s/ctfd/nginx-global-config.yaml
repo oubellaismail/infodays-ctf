@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingress-nginx-controller
+  namespace: ingress-nginx
+data:
+  # Global HTTP rate limiting and connection hardening for all ingress traffic.
+
+  # Keep-alive and timeout tuning — reduces idle connection abuse
+  keep-alive: "60"
+  keep-alive-requests: "100"
+  upstream-keepalive-connections: "50"
+
+  # Limit total body size — prevents large payload attacks on CTFd API
+  proxy-body-size: "10m"
+
+  # Hide nginx version from error pages
+  server-tokens: "false"
+
+  # Block common scanner user-agents at nginx level
+  # (empty-string UA, common vuln scanners)
+  block-user-agents: "~*masscan,~*nikto,~*nmap,~*sqlmap,~*dirbuster,~*gobuster"
+
+  # Real IP from DO LB — ensures rate-limiting keys on client IP not LB IP
+  use-forwarded-headers: "true"
+  forwarded-for-header: "X-Forwarded-For"
+  compute-full-forwarded-for: "true"
+
+  # Connection limits (applied globally across all nginx-ingress routes)
+  limit-conn-zone-variable: "$binary_remote_addr"

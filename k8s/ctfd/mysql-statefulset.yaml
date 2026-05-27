@@ -14,9 +14,30 @@ spec:
       labels:
         app: mysql
     spec:
+      nodeSelector:
+        doks.digitalocean.com/node-pool: mysql-pool
+      tolerations:
+      - key: workload
+        operator: Equal
+        value: mysql
+        effect: NoSchedule
+      securityContext:
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: mysql
         image: mysql:8
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+            add:
+              - CHOWN
+              - SETUID
+              - SETGID
+              - DAC_OVERRIDE
         args:
         - --max-connections=500
         - --innodb-buffer-pool-size=2147483648

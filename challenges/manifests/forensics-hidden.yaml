@@ -1,7 +1,0 @@
-id: forensics-hidden
-name: "Forensics Hidden"
-category: forensics
-image: registry.digitalocean.com/infodays-registry/base:forensics
-port: 8080
-type: http
-points: 150

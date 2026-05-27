@@ -26,6 +26,12 @@ resource "helm_release" "ingress_nginx" {
     value = "1"
   }
 
+  # Enable TCP services ConfigMap so bulk_spawn can register TCP challenge ports
+  set {
+    name  = "controller.extraArgs.tcp-services-configmap"
+    value = "ingress-nginx/tcp-services"
+  }
+
   depends_on = [kubernetes_namespace.ingress_nginx]
 }
 

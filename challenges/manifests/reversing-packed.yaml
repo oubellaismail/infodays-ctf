@@ -1,7 +1,0 @@
-id: reversing-packed
-name: "Reversing Packed"
-category: reversing
-image: registry.digitalocean.com/infodays-registry/base:reversing
-port: 1337
-type: tcp
-points: 300

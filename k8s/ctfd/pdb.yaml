@@ -1,0 +1,48 @@
+---
+# Keep at least 3 CTFd pods running during node drains or disruptions.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ctfd-pdb
+  namespace: ctfd
+spec:
+  minAvailable: 3
+  selector:
+    matchLabels:
+      app: ctfd
+---
+# Keep controller-api available (min 3 of 4 replicas).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: controller-api-pdb
+  namespace: ctfd
+spec:
+  minAvailable: 3
+  selector:
+    matchLabels:
+      app: controller-api
+---
+# MySQL and Redis are single-replica StatefulSets — PDB ensures they aren't
+# evicted during voluntary disruptions (node drains, cluster upgrades).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mysql-pdb
+  namespace: ctfd
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: mysql
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-pdb
+  namespace: ctfd
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: redis

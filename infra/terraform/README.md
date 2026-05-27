@@ -61,7 +61,8 @@ terraform plan
 
 Review the output. You should see:
 - 1 DOCR registry
-- 1 DOKS cluster (with 4 nodes)
+- 1 DOKS cluster (4 general worker nodes)
+- 1 dedicated MySQL node pool (`mysql-pool`, 1 × `s-4vcpu-8gb`)
 - 3 namespaces
 - 1 NGINX Ingress Controller
 - 2 DNS A-records
@@ -151,6 +152,7 @@ terraform output -raw kubeconfig | base64 -d > kubeconfig.yaml
 ├── variables.tf           # All input variables
 ├── outputs.tf             # Output values
 ├── cluster.tf             # DOKS cluster + node pool
+├── mysql-node-pool.tf     # Dedicated MySQL node pool
 ├── registry.tf            # DOCR + pull-secret configuration
 ├── namespaces.tf          # K8s namespaces + PSA labels
 ├── network-policies.tf    # Default-deny + allowlist policies

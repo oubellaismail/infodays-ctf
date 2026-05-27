@@ -1,0 +1,7 @@
+id: vip-invitation
+name: "VIP Invitation"
+category: Forensics
+type: static
+initial: 300
+minimum: 45
+decay: 15

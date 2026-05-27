@@ -1,0 +1,10 @@
+id: neymar
+name: "Neymar"
+category: Crypto
+description: "PSG's scout network runs on a proprietary Football Frame Protocol dispatch channel. Figure out the wire format, break the handshake, and relay the right play."
+image: registry.digitalocean.com/infodays-registry/challenges:neymar
+port: 1337
+type: tcp
+initial: 1500
+minimum: 200
+decay: 10

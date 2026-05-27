@@ -1,0 +1,44 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ctfd-ingress-login
+  namespace: ctfd
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    # Strict brute-force protection on auth endpoints — 5 req/s, no burst
+    nginx.ingress.kubernetes.io/limit-rps: "5"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "1"
+    nginx.ingress.kubernetes.io/limit-connections: "5"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - ctfd.infodays.net
+    secretName: ctfd-tls-secret
+  rules:
+  - host: ctfd.infodays.net
+    http:
+      paths:
+      - path: /login
+        pathType: Prefix
+        backend:
+          service:
+            name: ctfd-service
+            port:
+              number: 80
+      - path: /register
+        pathType: Prefix
+        backend:
+          service:
+            name: ctfd-service
+            port:
+              number: 80
+      - path: /api/v1/auth
+        pathType: Prefix
+        backend:
+          service:
+            name: ctfd-service
+            port:
+              number: 80

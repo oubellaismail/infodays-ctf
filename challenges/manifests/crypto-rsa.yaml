@@ -1,7 +1,0 @@
-id: crypto-rsa
-name: "Crypto RSA"
-category: crypto
-image: registry.digitalocean.com/infodays-registry/base:crypto
-port: 8080
-type: http
-points: 300

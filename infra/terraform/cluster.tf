@@ -4,7 +4,7 @@ data "digitalocean_kubernetes_versions" "available" {
 resource "digitalocean_kubernetes_cluster" "infodays" {
   name    = var.cluster_name
   region  = var.cluster_region
-  version = data.digitalocean_kubernetes_versions.available.latest_version
+  version = var.cluster_version != "" ? var.cluster_version : data.digitalocean_kubernetes_versions.available.latest_version
 
   auto_upgrade  = false
   surge_upgrade = false
@@ -22,8 +22,11 @@ resource "digitalocean_kubernetes_cluster" "infodays" {
   }
 }
 
-# Open NodePort range on worker nodes so TCP challenges are reachable from
-# the internet: nc challenges.infodays.net <nodeport>
+# Public NodePort access for challenge workers.
+# The platform uses direct NodePort access for both HTTP and TCP challenges via
+# challenges.infodays.net:<nodeport>.
+# DigitalOcean Cloud Firewalls currently do not expose a traffic-log setting in
+# the Terraform resource, so logging must be implemented at another layer.
 # Applied via the k8s:worker tag that DOKS sets on all worker droplets.
 resource "digitalocean_firewall" "nodeport_access" {
   name = "ctf-challenges-nodeport-access"
@@ -32,6 +35,6 @@ resource "digitalocean_firewall" "nodeport_access" {
   inbound_rule {
     protocol         = "tcp"
     port_range       = "30000-32767"
-    source_addresses = ["0.0.0.0/0", "::/0"]
+    source_addresses = var.challenge_nodeport_source_addresses
   }
 }

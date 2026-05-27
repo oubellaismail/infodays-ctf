@@ -36,25 +36,37 @@ variable "cluster_region" {
 variable "cluster_version" {
   type        = string
   default     = ""
-  description = "DOKS Kubernetes version prefix filter (empty = latest available)"
+  description = "Exact DOKS Kubernetes version. Empty selects latest; pin during event windows to avoid surprise upgrades."
 }
 
 variable "node_size" {
   type        = string
   default     = "s-4vcpu-8gb"
-  description = "Node pool droplet size (Phase 7: 5 × s-4vcpu-8gb general pool for 50-team support)"
+  description = "General worker pool droplet size for CTFd, controller, monitoring, and challenge workloads"
 }
 
 variable "node_min" {
   type        = number
-  default     = 3
-  description = "Minimum nodes in autoscaling pool (scales down during quiet periods)"
+  default     = 4
+  description = "Minimum nodes in the general worker pool for the 60-user event profile"
 }
 
 variable "node_max" {
   type        = number
-  default     = 8
-  description = "Maximum nodes in autoscaling pool (scales up for event peak / surprise load)"
+  default     = 4
+  description = "Maximum nodes in the general worker pool; MySQL gets a separate dedicated node pool"
+}
+
+variable "challenge_nodeport_source_addresses" {
+  type        = list(string)
+  default     = ["0.0.0.0/0", "::/0"]
+  description = "IPv4/IPv6 CIDRs allowed to reach challenge NodePorts. Defaults to public internet access because the platform serves challenge traffic through direct NodePorts."
+}
+
+variable "kubernetes_api_cidrs" {
+  type        = list(string)
+  default     = ["10.114.32.1/32", "100.65.0.227/32"]
+  description = "Cluster API server CIDRs allowed from controller pods for Kubernetes API calls. Keep this in sync with the live DOKS API endpoint addresses."
 }
 
 variable "registry_name" {

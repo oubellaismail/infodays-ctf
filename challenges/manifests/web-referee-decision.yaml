@@ -1,0 +1,32 @@
+id: referee-decision
+name: "Referee Decision"
+category: Web
+description: "Web challenge series following a VAR referee decision system. Three rounds of increasing difficulty."
+initial: 1050
+minimum: 155
+decay: 15
+image: registry.digitalocean.com/infodays-registry/challenges:referee-decision
+port: 8080
+type: http
+flags:
+  - id: referee-decision-1
+    name: "Referee Decision — Round 1"
+    category: Web
+    env: FLAG1
+    initial: 200
+    minimum: 30
+    decay: 15
+  - id: referee-decision-2
+    name: "Referee Decision — Round 2"
+    category: Web
+    env: FLAG2
+    initial: 350
+    minimum: 50
+    decay: 15
+  - id: referee-decision-3
+    name: "Referee Decision — Round 3"
+    category: Web
+    env: FLAG3
+    initial: 500
+    minimum: 75
+    decay: 15
