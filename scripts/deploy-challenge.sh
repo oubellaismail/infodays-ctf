@@ -249,13 +249,23 @@ ok "Controller API restarted"
 # ---------------------------------------------------------------------------
 info "Step 5/6: Running bulk_spawn (creating K8s resources for all teams)"
 
-# Run bulk_spawn inside the controller pod (it has K8s credentials and manifests)
-CONTROLLER_POD=$(kubectl get pods -n "$CTFD_NAMESPACE" -l app=controller-api \
+# Run bulk_spawn inside the on-demand provisioner pod. The controller API pod
+# keeps runtime-only RBAC and cannot read challenge secrets.
+cleanup_provisioner() {
+  kubectl scale deployment/controller-provisioner -n "$CTFD_NAMESPACE" --replicas=0 >/dev/null 2>&1 || true
+}
+trap cleanup_provisioner EXIT
+
+kubectl apply -f "$PROJECT_ROOT/k8s/controller/provisioner-deployment.yaml" >/dev/null
+kubectl scale deployment/controller-provisioner -n "$CTFD_NAMESPACE" --replicas=1 >/dev/null
+kubectl rollout status deployment/controller-provisioner -n "$CTFD_NAMESPACE" --timeout=120s >/dev/null
+
+PROVISIONER_POD=$(kubectl get pods -n "$CTFD_NAMESPACE" -l app=controller-provisioner \
   --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
 
-[ -n "$CONTROLLER_POD" ] || fail "No running controller-api pod found"
+[ -n "$PROVISIONER_POD" ] || fail "No running controller-provisioner pod found"
 
-kubectl exec -n "$CTFD_NAMESPACE" "$CONTROLLER_POD" -- \
+kubectl exec -n "$CTFD_NAMESPACE" "$PROVISIONER_POD" -- \
   env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
   python3 /app/bulk_spawn.py \
     --ctfd-url "$CTFD_INTERNAL_URL" \
@@ -270,7 +280,7 @@ ok "Bulk spawn complete"
 # ---------------------------------------------------------------------------
 info "Step 6/6: Importing per-team flags into CTFd"
 
-kubectl exec -n "$CTFD_NAMESPACE" "$CONTROLLER_POD" -- \
+kubectl exec -n "$CTFD_NAMESPACE" "$PROVISIONER_POD" -- \
   env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
   python3 /app/import_flags.py \
     --ctfd-url "$CTFD_INTERNAL_URL" 2>&1 | while IFS= read -r line; do

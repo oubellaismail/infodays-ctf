@@ -8,7 +8,7 @@ spec:
     matchExpressions:
     - key: app
       operator: In
-      values: [controller-api, controller-daemon]
+      values: [controller-api, controller-daemon, controller-provisioner]
   egress:
   - toEntities:
     - kube-apiserver

@@ -134,13 +134,13 @@ Do NOT open the event until every item in the Ops Readiness section is checked.
   Expected: HTTP 401
 
 - [ ] ProxySQL backends healthy (not SHUNNED)
-  `kubectl exec -n ctfd deployment/proxysql -- mysql -h127.0.0.1 -P6032 -uadmin -padmin -e "SELECT hostgroup, srv_host, status, ConnUsed FROM stats.stats_mysql_connection_pool;"`
+  `PROXYSQL_ADMIN_PASSWORD="$(kubectl get secret proxysql-admin -n ctfd -o jsonpath='{.data.PROXYSQL_ADMIN_PASSWORD}' | base64 -d)" && kubectl exec -n ctfd deployment/proxysql -- env MYSQL_PWD="$PROXYSQL_ADMIN_PASSWORD" mysql -h127.0.0.1 -P6032 -uadmin -e "SELECT hostgroup, srv_host, status, ConnUsed FROM stats.stats_mysql_connection_pool;"`
   Expected: one ONLINE entry for hostgroup 0 / `mysql.ctfd.svc.cluster.local`; NOT SHUNNED
 
-- [ ] MySQL replica is healthy enough for recovery, but not serving ProxySQL reads
+- [ ] MySQL replica is healthy and serving ProxySQL reads
   `kubectl exec -n ctfd mysql-replica-0 -- mysql -uroot -p"$(kubectl get secret ctfd-secrets -n ctfd -o jsonpath='{.data.MYSQL_ROOT_PASSWORD}' | base64 -d)" -e "SHOW REPLICA STATUS\G" 2>/dev/null | grep -E "Replica_IO_Running|Replica_SQL_Running|Seconds_Behind"`
   Expected if replica is enabled: Replica_IO_Running=Yes, Replica_SQL_Running=Yes, Seconds_Behind_Source=0 (or <5)
-  ProxySQL config should still route all queries to hostgroup 0 for event-day predictability.
+  ProxySQL config should route ordinary SELECTs to hostgroup 1 and writes/write-intent reads to hostgroup 0.
 
 - [ ] Redis is a StatefulSet with PVC (not ephemeral Deployment)
   `kubectl get statefulset redis -n ctfd`
@@ -148,9 +148,9 @@ Do NOT open the event until every item in the Ops Readiness section is checked.
   `kubectl get pvc redis-data-redis-0 -n ctfd`
   Expected: PVC bound, 1Gi
 
-- [ ] SESSION_COOKIE_DOMAIN set to `.infodays.net` in CTFd pods
-  `kubectl exec -n ctfd deployment/ctfd -- env | grep SESSION_COOKIE_DOMAIN`
-  Expected: `SESSION_COOKIE_DOMAIN=.infodays.net`
+- [ ] CTFd session cookies are host-only
+  `kubectl exec -n ctfd deployment/ctfd -- env | grep SESSION_COOKIE_DOMAIN || true`
+  Expected: no `SESSION_COOKIE_DOMAIN` value, so CTFd cookies are not sent to challenge subdomains.
 
 - [ ] Rate limiting active on CTFd ingress
   `kubectl get ingress ctfd -n ctfd -o jsonpath='{.metadata.annotations}'`
@@ -181,6 +181,10 @@ Do NOT open the event until every item in the Ops Readiness section is checked.
 - [ ] MySQL backup taken successfully
   `bash scripts/backup-mysql.sh`
   Expected: file `backups/ctfd-backup-YYYY-MM-DD_*.sql` created and non-empty
+
+- [ ] Local secret and backup files are readable only by the operator
+  `chmod 600 .env .ctfd.env .env.local data/teams.csv infra/terraform/terraform.tfvars k8s/ctfd/secrets.local.yaml 2>/dev/null || true; chmod 700 backups 2>/dev/null || true`
+  Expected: credentials, player CSV, Terraform vars, and SQL dumps are not world-readable.
 
 - [ ] Load test passed: error rate < 1% at 60 VUs (15 teams × 4 members); p95 < 3s for normal CTFd pages
   Note: p95 ~11-12s is normal due to K8s API roundtrip on first `activate` (pod scale-up). Error rate is the critical threshold, not raw latency.

@@ -74,8 +74,6 @@ spec:
           value: "true"
         - name: HTTP_RELATIVE_PATH
           value: "/"
-        - name: SESSION_COOKIE_DOMAIN
-          value: ".infodays.net"
         - name: SESSION_COOKIE_SECURE
           value: "true"
         - name: SESSION_COOKIE_HTTPONLY

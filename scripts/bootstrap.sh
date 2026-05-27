@@ -287,6 +287,13 @@ else
   kubectl apply -f "$K8S/ctfd/redis-deployment.yaml"
 
   step "Applying ProxySQL..."
+  if ! kubectl get secret proxysql-admin -n "$CTFD_NAMESPACE" >/dev/null 2>&1; then
+    PROXYSQL_ADMIN_PASSWORD="$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)"
+    kubectl create secret generic proxysql-admin \
+      --from-literal=PROXYSQL_ADMIN_PASSWORD="$PROXYSQL_ADMIN_PASSWORD" \
+      -n "$CTFD_NAMESPACE" >/dev/null
+    unset PROXYSQL_ADMIN_PASSWORD
+  fi
   kubectl apply -f "$K8S/ctfd/proxysql-configmap.yaml"
   kubectl apply -f "$K8S/ctfd/proxysql-deployment.yaml"
 
@@ -302,6 +309,7 @@ else
   # ── Network policy ────────────────────────────────────────────────────────
   step "Applying CTFd network policy..."
   kubectl apply -f "$K8S/ctfd/networkpolicy.yaml"
+  kubectl delete networkpolicy allow-ctfd-egress-internet -n "$CTFD_NAMESPACE" --ignore-not-found >/dev/null
 
   # ── CTFd Deployment + Ingress ─────────────────────────────────────────────
   step "Applying CTFd deployment..."
@@ -350,6 +358,9 @@ else
   # ── Controller deployments ────────────────────────────────────────────────
   step "Applying controller API..."
   kubectl apply -f "$K8S/controller/api-deployment.yaml"
+
+  step "Applying controller provisioner..."
+  kubectl apply -f "$K8S/controller/provisioner-deployment.yaml"
 
   step "Applying controller daemon..."
   kubectl apply -f "$K8S/controller/daemon-deployment.yaml"

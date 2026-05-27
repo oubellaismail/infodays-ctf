@@ -4,25 +4,43 @@ metadata:
   name: ctf-controller
   namespace: ctfd
 ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ctf-provisioner
+  namespace: ctfd
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: ctf-controller
   namespace: challenges
 rules:
-  # Deployments: create (bulk_spawn), get/list/patch (api + daemon)
+  # Runtime controller API: count, inspect, and scale pre-created deployments.
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
-  # Services: create (bulk_spawn)
+    verbs: ["get", "list", "watch", "patch"]
+  # Runtime controller API: read NodePort assignments for challenge URLs.
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ctf-provisioner
+  namespace: challenges
+rules:
+  # Provisioning only: bulk_spawn creates/updates challenge resources.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "update", "patch"]
   - apiGroups: [""]
     resources: ["services"]
     verbs: ["get", "list", "create", "update", "patch"]
-  # Secrets: create (bulk_spawn)
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "create", "update", "patch"]
-  # Ingresses: create (bulk_spawn) — delete removed; teardown uses admin kubeconfig
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     verbs: ["get", "list", "create", "update", "patch"]
@@ -41,6 +59,20 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   name: ctf-controller
 ---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ctf-provisioner
+  namespace: challenges
+subjects:
+  - kind: ServiceAccount
+    name: ctf-provisioner
+    namespace: ctfd
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: ctf-provisioner
+---
 # Separate role for ingress-nginx namespace (TCP ConfigMap)
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -48,7 +80,7 @@ metadata:
   name: ctf-controller-nginx
   namespace: ingress-nginx
 rules:
-  # ConfigMap: get/patch (bulk_spawn reads+patches tcp-services, api reads)
+  # Provisioning only: bulk_spawn reads+patches tcp-services.
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "patch"]
@@ -60,7 +92,7 @@ metadata:
   namespace: ingress-nginx
 subjects:
   - kind: ServiceAccount
-    name: ctf-controller
+    name: ctf-provisioner
     namespace: ctfd
 roleRef:
   kind: Role

@@ -212,6 +212,18 @@
 
   var SERVICE_CATEGORIES = ["web", "pwn", "misc", "crypto", "forensics", "reversing", "osint", "stego"];
 
+  // Challenge manifest ID map: { ctfd_numeric_id_string: manifest_id }
+  // Fetched once from /controller-plugin/challenge-map (player-accessible).
+  var challengeManifestMap = {};
+  (async function loadChallengeMap() {
+    try {
+      var resp = await ctfdFetch("/controller-plugin/challenge-map");
+      if (resp.ok) {
+        challengeManifestMap = await resp.json();
+      }
+    } catch (e) { /* non-fatal, fall back to name slug */ }
+  })();
+
   // Global instance state — tracks all running instances for board indicators
   var allInstanceStatuses = {}; // { challenge_id: { status, url } }
   var boardPollTimer = null;
@@ -409,6 +421,26 @@
           urlBlock.appendChild(urlLink);
         }
         container.appendChild(urlBlock);
+      }
+
+      // Extra ports (e.g. Modbus for ait-baha-nuclear)
+      if (challenge && challenge.extra_ports && Object.keys(challenge.extra_ports).length > 0) {
+        var extraBlock = document.createElement("div");
+        extraBlock.className = "ctf-extra-ports";
+        Object.keys(challenge.extra_ports).forEach(function (portName) {
+          var row = document.createElement("div");
+          row.className = "ctf-extra-port-row";
+          var label = document.createElement("span");
+          label.className = "ctf-url-label";
+          label.textContent = portName.toUpperCase();
+          var code = document.createElement("code");
+          code.className = "ctf-nc-command";
+          code.textContent = challenge.extra_ports[portName];
+          row.appendChild(label);
+          row.appendChild(code);
+          extraBlock.appendChild(row);
+        });
+        container.appendChild(extraBlock);
       }
 
       // Action row: status dot + quiet Stop + Restart
@@ -796,20 +828,8 @@
     currentNumericId = numericId;
     isMultiFlag = info.type === "multi_flag";
 
-    // Derive deployment ID from the CTFd flag's 'data' field (manifest entry ID).
-    // For single-flag challenges: data = "man-city" → used as-is.
-    // For multi_flag: data = "man-city" (parent id, no stripping needed).
-    // Legacy bundle entries: data = "man-city-1" → strip -N → "man-city".
-    try {
-      var flagResp = await ctfdFetch("/api/v1/flags?challenge_id=" + numericId + "&per_page=1");
-      if (flagResp.ok) {
-        var flagData = await flagResp.json();
-        var teamFlag = (flagData.data || []).find(function (f) { return f.type === "team"; });
-        if (teamFlag && teamFlag.data) {
-          currentChallengeId = teamFlag.data.replace(/-\d+$/, "");
-        }
-      }
-    } catch (e) { /* fall through to name-based slug */ }
+    // Derive manifest ID: 1) challenge-map (player-accessible), 2) name slug fallback.
+    currentChallengeId = (challengeManifestMap[String(numericId)] || "").replace(/-\d+$/, "") || null;
 
     if (!currentChallengeId && info.name) {
       // Normalize unicode (ï→i, é→e, etc.) before slugifying so accented

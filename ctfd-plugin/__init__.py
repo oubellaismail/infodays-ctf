@@ -19,6 +19,7 @@ import hmac as _hmac
 import hashlib
 import os
 import io
+import html
 import zipfile
 import threading
 from datetime import datetime
@@ -82,6 +83,22 @@ def _challenge_is_visible(challenge_manifest_id):
     except Exception:
         return False
     return False
+
+
+def _challenge_id_is_visible(challenge_id):
+    """Return True if the numeric CTFd challenge id is visible."""
+    try:
+        from CTFd.models import Challenges
+        challenge = Challenges.query.get(int(challenge_id))
+        return bool(challenge and getattr(challenge, "state", "") == "visible")
+    except Exception:
+        return False
+
+
+def _escape_html(value):
+    """Escape DB/user-controlled values before rendering custom admin HTML."""
+    return html.escape("" if value is None else str(value), quote=True)
+
 
 def _derive(team_id, challenge_manifest_id, master_secret):
     """Return the derived flag string for a given team + challenge."""
@@ -518,9 +535,8 @@ def load(app):
     """Load the CTFd plugin."""
     from CTFd.utils.plugins import register_script
 
-    # Extend session cookie to all subdomains so nginx auth_request on
-    # *.challenges.infodays.net forwards a valid CTFd session cookie.
-    app.config["SESSION_COOKIE_DOMAIN"] = ".infodays.net"
+    # Keep CTFd cookies host-only. Challenge services are served from
+    # challenges.infodays.net NodePorts and must not receive CTFd session cookies.
 
     # ── Branding: inject stylesheet + Google Fonts ─────────────────────────
     GOOGLE_FONTS_PRECONNECT = '<link rel="preconnect" href="https://fonts.googleapis.com">'
@@ -587,6 +603,26 @@ def load(app):
         resp.headers["Content-Type"] = "application/javascript"
         resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         return resp
+
+    @blueprint.route("/controller-plugin/challenge-map")
+    def controller_challenge_map():
+        """Return {ctfd_challenge_id: manifest_id} for all team-flag challenges.
+        Player-accessible (requires login only). Used by plugin.js to resolve
+        manifest IDs without needing admin access to /api/v1/flags."""
+        if not _check_authed():
+            return jsonify({"error": "unauthorized"}), 401
+        try:
+            from CTFd.models import Flags
+            flags = Flags.query.filter_by(type="team").all()
+            mapping = {}
+            for f in flags:
+                if f.data:
+                    mapping[str(f.challenge_id)] = f.data
+            resp = make_response(jsonify(mapping))
+            resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            return resp
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
 
     # ── Proxy routes ──────────────────────────────────────────────────────────
 
@@ -819,6 +855,9 @@ def load(app):
             from CTFd.utils.user import get_current_team
             from CTFd.models import db
             from sqlalchemy import text
+
+            if not _check_admin() and not _challenge_id_is_visible(challenge_id):
+                return jsonify({"error": "challenge not available"}), 404
 
             team = get_current_team()
             team_id = team.id if team else None
@@ -1093,10 +1132,10 @@ def load(app):
                 badge = '<span class="badge-sus">SUSPICIOUS</span>' if r.distinct_ips >= 4 \
                         else '<span class="badge-ok">OK</span>'
                 team_link = '<a href="/admin/teams/%d" style="color:var(--bs-primary)">%s</a>' % (
-                    r.team_id, r.team or "(no team)"
+                    r.team_id, _escape_html(r.team or "(no team)")
                 ) if r.team_id else "(no team)"
                 user_link = '<a href="/admin/users/%d" style="color:var(--bs-primary)">%s</a>' % (
-                    r.user_id, r.user
+                    r.user_id, _escape_html(r.user)
                 )
                 rows_html += (
                     "<tr><td>%s</td><td>%s</td><td>%s</td>"
@@ -1105,7 +1144,7 @@ def load(app):
                     "<td class='ip-list'>%s</td>"
                     "<td style='color:var(--bs-secondary-color);font-size:.8rem'>%s</td></tr>"
                 ) % (badge, user_link, team_link, r.distinct_ips, r.total_events,
-                     r.ip_list or "", str(r.last_seen)[:16])
+                     _escape_html(r.ip_list or ""), _escape_html(str(r.last_seen)[:16]))
 
             stats = (
                 '<span class="stat-pill">%d users tracked</span>'
@@ -1135,7 +1174,7 @@ def load(app):
             resp.headers["Content-Type"] = "text/html"
             return resp
         except Exception as e:
-            return "<pre>Error: %s</pre>" % str(e), 500
+            return "<pre>Error: %s</pre>" % _escape_html(e), 500
 
     @blueprint.route("/admin/cheaters")
     def admin_cheaters():
@@ -1168,13 +1207,13 @@ def load(app):
             rows_html = ""
             for r in rows:
                 sub_team = '<a href="/admin/teams/%d" style="color:var(--bs-primary)">%s</a>' % (
-                    r.submitting_team_id, r.submitting_team or "?"
+                    r.submitting_team_id, _escape_html(r.submitting_team or "?")
                 ) if r.submitting_team_id else "?"
                 sub_user = '<a href="/admin/users/%d" style="color:var(--bs-primary)">%s</a>' % (
-                    r.submitting_user_id, r.submitting_user or "?"
+                    r.submitting_user_id, _escape_html(r.submitting_user or "?")
                 ) if r.submitting_user_id else "?"
                 own_team = '<a href="/admin/teams/%d" style="color:#ff6b6b">%s</a>' % (
-                    r.owner_team_id, r.owner_team or "?"
+                    r.owner_team_id, _escape_html(r.owner_team or "?")
                 ) if r.owner_team_id else "?"
                 rows_html += (
                     "<tr><td>%s</td><td>%s</td><td>%s</td>"
@@ -1182,7 +1221,9 @@ def load(app):
                     "<td>%s</td>"
                     "<td style='color:var(--bs-secondary-color);font-size:.8rem'>%s</td></tr>"
                 ) % (sub_team, sub_user, own_team,
-                     r.submitted_flag[:60], r.challenge_manifest_id, str(r.submitted_at)[:16])
+                     _escape_html((r.submitted_flag or "")[:60]),
+                     _escape_html(r.challenge_manifest_id),
+                     _escape_html(str(r.submitted_at)[:16]))
 
             content = """
 <div class="page-title">Flag Cheating Log</div>
@@ -1205,7 +1246,7 @@ def load(app):
             resp.headers["Content-Type"] = "text/html"
             return resp
         except Exception as e:
-            return "<pre>Error: %s</pre>" % str(e), 500
+            return "<pre>Error: %s</pre>" % _escape_html(e), 500
 
     app.register_blueprint(blueprint)
 

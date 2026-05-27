@@ -24,6 +24,7 @@ letsencrypt_email = "ops@infodays.net"
 # node_min              = 4
 # node_max              = 4
 # challenge_nodeport_source_addresses = ["0.0.0.0/0", "::/0"]
+# kubernetes_api_cidrs  = ["10.114.32.1/32", "100.65.0.227/32"]
 # registry_name         = "infodays-registry"
 # registry_tier         = "starter"
 # use_letsencrypt_staging = false

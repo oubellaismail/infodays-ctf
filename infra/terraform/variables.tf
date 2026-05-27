@@ -63,6 +63,12 @@ variable "challenge_nodeport_source_addresses" {
   description = "IPv4/IPv6 CIDRs allowed to reach challenge NodePorts. Defaults to public internet access because the platform serves challenge traffic through direct NodePorts."
 }
 
+variable "kubernetes_api_cidrs" {
+  type        = list(string)
+  default     = ["10.114.32.1/32", "100.65.0.227/32"]
+  description = "Cluster API server CIDRs allowed from controller pods for Kubernetes API calls. Keep this in sync with the live DOKS API endpoint addresses."
+}
+
 variable "registry_name" {
   type        = string
   default     = "infodays-registry"

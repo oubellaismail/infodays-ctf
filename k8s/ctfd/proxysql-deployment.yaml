@@ -25,12 +25,18 @@ spec:
         - |
           cp /etc/proxysql-template/proxysql.cnf /var/lib/proxysql/proxysql.cnf
           sed -i "s/PLACEHOLDER_WILL_BE_OVERRIDDEN/$MYSQL_PASSWORD/g" /var/lib/proxysql/proxysql.cnf
+          sed -i "s/PLACEHOLDER_ADMIN_PASSWORD/$PROXYSQL_ADMIN_PASSWORD/g" /var/lib/proxysql/proxysql.cnf
         env:
         - name: MYSQL_PASSWORD
           valueFrom:
             secretKeyRef:
               name: ctfd-secrets
               key: MYSQL_PASSWORD
+        - name: PROXYSQL_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: proxysql-admin
+              key: PROXYSQL_ADMIN_PASSWORD
         volumeMounts:
         - name: proxysql-config
           mountPath: /etc/proxysql-template
@@ -59,9 +65,12 @@ spec:
         - containerPort: 6033
           name: mysql
           protocol: TCP
-        - containerPort: 6032
-          name: admin
-          protocol: TCP
+        env:
+        - name: PROXYSQL_ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: proxysql-admin
+              key: PROXYSQL_ADMIN_PASSWORD
         resources:
           limits:
             cpu: 1000m
@@ -72,32 +81,18 @@ spec:
         readinessProbe:
           exec:
             command:
-            - mysql
-            - -h
-            - "127.0.0.1"
-            - -P
-            - "6032"
-            - -u
-            - admin
-            - -padmin
-            - -e
-            - "SELECT 1"
+            - /bin/sh
+            - -c
+            - MYSQL_PWD="$PROXYSQL_ADMIN_PASSWORD" mysql -h127.0.0.1 -P6032 -uadmin -e "SELECT 1"
           initialDelaySeconds: 5
           periodSeconds: 10
           timeoutSeconds: 5
         livenessProbe:
           exec:
             command:
-            - mysql
-            - -h
-            - "127.0.0.1"
-            - -P
-            - "6032"
-            - -u
-            - admin
-            - -padmin
-            - -e
-            - "SELECT 1"
+            - /bin/sh
+            - -c
+            - MYSQL_PWD="$PROXYSQL_ADMIN_PASSWORD" mysql -h127.0.0.1 -P6032 -uadmin -e "SELECT 1"
           initialDelaySeconds: 15
           periodSeconds: 30
           timeoutSeconds: 5
@@ -124,8 +119,4 @@ spec:
   - port: 6033
     targetPort: 6033
     name: mysql
-    protocol: TCP
-  - port: 6032
-    targetPort: 6032
-    name: admin
     protocol: TCP

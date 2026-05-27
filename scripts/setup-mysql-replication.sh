@@ -117,15 +117,25 @@ fi
 
 echo "Applying ProxySQL read/write split..."
 kubectl apply -f k8s/ctfd/networkpolicy.yaml
+kubectl delete networkpolicy allow-ctfd-egress-internet -n "$NS" --ignore-not-found >/dev/null
+if ! kubectl get secret proxysql-admin -n "$NS" >/dev/null 2>&1; then
+  PROXYSQL_ADMIN_PASSWORD="$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 32)"
+  kubectl create secret generic proxysql-admin \
+    --from-literal=PROXYSQL_ADMIN_PASSWORD="$PROXYSQL_ADMIN_PASSWORD" \
+    -n "$NS" >/dev/null
+  unset PROXYSQL_ADMIN_PASSWORD
+fi
 kubectl apply -f k8s/ctfd/proxysql-configmap.yaml
 kubectl rollout restart deployment/proxysql -n "$NS"
 kubectl rollout status deployment/proxysql -n "$NS" --timeout=300s
 
 echo "Verifying ProxySQL routing..."
-kubectl exec -n "$NS" deployment/proxysql -- mysql -h127.0.0.1 -P6032 -uadmin -padmin -e "
+PROXYSQL_ADMIN_PASSWORD="$(kubectl get secret proxysql-admin -n "$NS" -o jsonpath='{.data.PROXYSQL_ADMIN_PASSWORD}' | base64 -d)"
+kubectl exec -n "$NS" deployment/proxysql -- env MYSQL_PWD="$PROXYSQL_ADMIN_PASSWORD" mysql -h127.0.0.1 -P6032 -uadmin -e "
   SELECT hostgroup_id, hostname, status FROM runtime_mysql_servers ORDER BY hostgroup_id, hostname;
   SELECT rule_id, active, match_pattern, destination_hostgroup, apply FROM runtime_mysql_query_rules ORDER BY rule_id;
   SELECT hostgroup, srv_host, status, ConnERR, Queries FROM stats.stats_mysql_connection_pool ORDER BY hostgroup;
 " 2>/dev/null
+unset PROXYSQL_ADMIN_PASSWORD
 
 echo "Setup complete: normal SELECTs route to mysql-replica; writes and write-intent reads route to mysql."

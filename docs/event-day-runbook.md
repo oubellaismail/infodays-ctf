@@ -67,17 +67,20 @@ kubectl create configmap challenge-manifests \
   --from-file=challenges/manifests/ -n ctfd --dry-run=client -o yaml | kubectl apply -f -
 kubectl rollout restart deployment/controller-api -n ctfd
 
-# 4. Re-run bulk_spawn to pre-spawn pods for all teams (incl. the new challenge)
-kubectl exec -n ctfd deployment/controller-api -- \
-  python3 bulk_spawn.py --ctfd-url http://localhost:5000 --token "$CTFD_ADMIN_TOKEN"
+# 4. Re-run provisioning via the on-demand provisioner pod
+bash scripts/deploy-challenge.sh challenges/manifests/<challenge-id>.yaml
 
 # Static challenges (type: static):
 # 1. Add the manifest to challenges/manifests/<challenge-id>.yaml
 # 2. Update ConfigMap + restart controller (same as above)
 # 3. Run import_flags to create the team flag row:
-kubectl exec -n ctfd deployment/controller-api -- \
+kubectl scale deployment/controller-provisioner -n ctfd --replicas=1
+kubectl rollout status deployment/controller-provisioner -n ctfd --timeout=120s
+PROVISIONER_POD="$(kubectl get pods -n ctfd -l app=controller-provisioner --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')"
+kubectl exec -n ctfd "$PROVISIONER_POD" -- \
   env CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
   python3 import_flags.py --ctfd-url https://ctfd.infodays.net
+kubectl scale deployment/controller-provisioner -n ctfd --replicas=0
 # No bulk_spawn needed — plugin serves per-team zips on the fly via /download/{id}
 ```
 
@@ -224,7 +227,7 @@ kubectl apply -f k8s/controller/daemon-deployment.yaml
 # 9. Pre-create challenge manifests ConfigMap, bulk spawn, import flags
 kubectl create configmap challenge-manifests --from-file=challenges/manifests/ -n ctfd --dry-run=client -o yaml | kubectl apply -f -
 kubectl rollout restart deployment/controller-api -n ctfd
-# Run bulk_spawn and import_flags via controller pod
+# Run bulk_spawn and import_flags via controller-provisioner, not controller-api
 ```
 
 **Notes on Redis after restore:**

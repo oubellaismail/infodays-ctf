@@ -79,11 +79,13 @@ build_push "agadir-medport"   "$REPO_PATH/challenges/misc/agadir_medport"
 build_push "stadium-soc"      "$REPO_PATH/challenges/forensics/stadium_soc"
 
 # Crypto (new)
-build_push "kdb"     "$REPO_ROOT/challenges/real/challenges/crypto/kdb"     "$REPO_ROOT/challenges/real/challenges/crypto/kdb/src/Dockerfile"
-build_push "neymar"  "$REPO_ROOT/challenges/real/challenges/crypto/neymar"
+build_push "kdb"                    "$REPO_ROOT/challenges/real/challenges/crypto/kdb"            "$REPO_ROOT/challenges/real/challenges/crypto/kdb/src/Dockerfile"
+build_push "neymar"                 "$REPO_ROOT/challenges/real/challenges/crypto/neymar"
+build_push "crypto-penalty-shootout" "$REPO_ROOT/challenges/real/challenges/crypto/penalty_oracle"
 
 # Pwn (new)
-build_push "leonel-messi" "$REPO_ROOT/challenges/real/challenges/pwn/leonel_messi"
+build_push "leonel-messi"   "$REPO_ROOT/challenges/real/challenges/pwn/leonel_messi"
+build_push "ghost-protocol" "$REPO_ROOT/challenges/real/challenges/pwn/ghost"
 
 # Reversing (new)
 build_push "cr7"       "$REPO_ROOT/challenges/real/challenges/reversing/cr7"       "$REPO_ROOT/challenges/real/challenges/reversing/cr7/src/Dockerfile"
@@ -93,4 +95,4 @@ build_push "formation" "$REPO_ROOT/challenges/real/challenges/reversing/formatio
 build_push "haaland" "$REPO_ROOT/challenges/real/challenges/web/haaland"
 
 echo ""
-echo "=== Done: 3 base + 16 challenge images pushed to $REGISTRY/challenges ==="
+echo "=== Done: 3 base + 18 challenge images pushed to $REGISTRY/challenges ==="

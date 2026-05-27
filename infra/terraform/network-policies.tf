@@ -186,29 +186,35 @@ resource "kubernetes_network_policy" "allow_ctfd_redis" {
   depends_on = [kubernetes_namespace.ctfd]
 }
 
-resource "kubernetes_network_policy" "allow_ctfd_egress_internet" {
+resource "kubernetes_network_policy" "allow_controller_egress_k8s_api" {
   metadata {
-    name      = "allow-ctfd-egress-internet"
+    name      = "allow-controller-egress-k8s-api"
     namespace = "ctfd"
   }
 
   spec {
     pod_selector {
-      match_labels = {
-        app = "controller-api"
+      match_expressions {
+        key      = "app"
+        operator = "In"
+        values   = ["controller-api", "controller-daemon", "controller-provisioner"]
       }
     }
 
-    egress {
-      to {
-        ip_block {
-          cidr = "0.0.0.0/0"
-        }
-      }
+    dynamic "egress" {
+      for_each = var.kubernetes_api_cidrs
 
-      ports {
-        port     = "443"
-        protocol = "TCP"
+      content {
+        to {
+          ip_block {
+            cidr = egress.value
+          }
+        }
+
+        ports {
+          port     = "443"
+          protocol = "TCP"
+        }
       }
     }
 

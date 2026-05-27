@@ -301,17 +301,27 @@ ok "Controller API restarted"
 # ===========================================================================
 info "Phase 5/6: Running bulk_spawn (all teams × all service challenges)"
 
-# Wait for a running pod — rollout status returns before pods fully accept traffic
-CONTROLLER_POD=""
+# Run provisioning inside the scaled-to-zero provisioner pod. The always-on
+# controller-api pod keeps runtime-only RBAC and cannot read challenge secrets.
+cleanup_provisioner() {
+  kubectl scale deployment/controller-provisioner -n "$CTFD_NAMESPACE" --replicas=0 >/dev/null 2>&1 || true
+}
+trap cleanup_provisioner EXIT
+
+kubectl apply -f "$PROJECT_ROOT/k8s/controller/provisioner-deployment.yaml" >/dev/null
+kubectl scale deployment/controller-provisioner -n "$CTFD_NAMESPACE" --replicas=1 >/dev/null
+kubectl rollout status deployment/controller-provisioner -n "$CTFD_NAMESPACE" --timeout=120s >/dev/null
+
+PROVISIONER_POD=""
 for _i in $(seq 1 12); do
-  CONTROLLER_POD=$(kubectl get pods -n "$CTFD_NAMESPACE" -l app=controller-api \
+  PROVISIONER_POD=$(kubectl get pods -n "$CTFD_NAMESPACE" -l app=controller-provisioner \
     --field-selector=status.phase=Running \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-  [[ -n "$CONTROLLER_POD" ]] && break
+  [[ -n "$PROVISIONER_POD" ]] && break
   sleep 5
 done
-[[ -n "$CONTROLLER_POD" ]] || fail "No running controller-api pod found in namespace '$CTFD_NAMESPACE'"
-step "Using controller pod: $CONTROLLER_POD"
+[[ -n "$PROVISIONER_POD" ]] || fail "No running controller-provisioner pod found in namespace '$CTFD_NAMESPACE'"
+step "Using provisioner pod: $PROVISIONER_POD"
 
 # Use internal service URL — ctfd.infodays.net is not reachable from within the cluster
 # (hairpin NAT issue with DOKS load balancer). Internal URL works because NetworkPolicy
@@ -322,7 +332,7 @@ CTFD_INTERNAL_URL="http://ctfd-service.${CTFD_NAMESPACE}.svc.cluster.local"
 kubectl create configmap tcp-services -n ingress-nginx \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1 || true
 
-kubectl exec -n "$CTFD_NAMESPACE" "$CONTROLLER_POD" -- \
+kubectl exec -n "$CTFD_NAMESPACE" "$PROVISIONER_POD" -- \
   env \
     CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
     CTF_MASTER_SECRET="$CTF_MASTER_SECRET" \
@@ -338,7 +348,7 @@ ok "bulk_spawn complete"
 # ===========================================================================
 info "Phase 6/6: Importing team-derived flags into CTFd"
 
-kubectl exec -n "$CTFD_NAMESPACE" "$CONTROLLER_POD" -- \
+kubectl exec -n "$CTFD_NAMESPACE" "$PROVISIONER_POD" -- \
   env \
     CTFD_ADMIN_TOKEN="$CTFD_ADMIN_TOKEN" \
     CTF_MASTER_SECRET="$CTF_MASTER_SECRET" \

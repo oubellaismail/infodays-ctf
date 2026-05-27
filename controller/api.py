@@ -123,6 +123,7 @@ class DeactivateRequest(BaseModel):
 class ActivateResponse(BaseModel):
     status: str
     url: Optional[str] = None
+    extra_ports: Optional[dict] = None
 
 
 class DeactivateResponse(BaseModel):
@@ -133,6 +134,7 @@ class ChallengeStatus(BaseModel):
     challenge_id: str
     status: str
     url: Optional[str] = None
+    extra_ports: Optional[dict] = None
     activated_at: Optional[str] = None
 
 
@@ -163,37 +165,48 @@ def clear_activation_annotation(apps_v1: Any, dep_name: str) -> None:
     apps_v1.patch_namespaced_deployment(dep_name, "challenges", patch_body)
 
 
-def build_challenge_url(core_v1: Any, team_id: str, challenge_id: str) -> Optional[str]:
+def build_challenge_url(core_v1: Any, team_id: str, challenge_id: str) -> tuple[Optional[str], Optional[dict]]:
     """
-    Build the challenge URL for a team.
+    Build the challenge URL and extra ports for a team.
 
     For HTTP challenges: http://challenges.infodays.net:{port}
     For TCP challenges: nc challenges.infodays.net {port}
-    Both use NodePort. Returns None if port not yet assigned.
+    Both use NodePort. Returns (None, None) if port not yet assigned.
+
+    extra_ports: dict mapping port name → connection string for each additional
+    exposed port (e.g. {"modbus": "challenges.infodays.net:32189"})
     """
     manifests = get_challenge_manifests()
     challenge = manifests.get(challenge_id)
 
     if not challenge:
         logger.warning(f"Manifest not found for challenge_id={challenge_id}")
-        return None
+        return None, None
 
-    # HTTP and TCP both use NodePort — look up the assigned port from the service
     try:
         svc_name = service_name(team_id, challenge_id)
         svc = core_v1.read_namespaced_service(svc_name, "challenges")
+
         node_port = svc.spec.ports[0].node_port
         if not node_port:
             logger.warning(f"NodePort not assigned yet for {svc_name}")
-            return None
+            return None, None
 
         if challenge.get("type") == "http":
-            return f"http://challenges.infodays.net:{node_port}"
+            url = f"http://challenges.infodays.net:{node_port}"
+        else:
+            url = f"nc challenges.infodays.net {node_port}"
 
-        return f"nc challenges.infodays.net {node_port}"
+        # Collect extra ports (any port beyond the first)
+        extra_ports = {}
+        for p in svc.spec.ports[1:]:
+            name = p.name or str(p.port)
+            extra_ports[name] = f"challenges.infodays.net:{p.node_port}"
+
+        return url, extra_ports or None
     except ApiException as e:
         logger.error(f"Failed to build TCP URL for {svc_name}: {e.status} {e.reason}")
-        return None
+        return None, None
 
 
 @app.post("/activate", response_model=ActivateResponse)
@@ -229,10 +242,10 @@ def activate(req: ActivateRequest, request: Request, _=Depends(verify_controller
     }
     apps_v1.patch_namespaced_deployment(dep_name, "challenges", patch_body)
 
-    url = build_challenge_url(core_v1, req.team_id, req.challenge_id)
+    url, extra_ports = build_challenge_url(core_v1, req.team_id, req.challenge_id)
     _invalidate_status_cache(req.team_id)
     logger.info(f"Activated {dep_name}")
-    return {"status": "starting", "url": url}
+    return {"status": "starting", "url": url, "extra_ports": extra_ports}
 
 
 @app.post("/deactivate", response_model=DeactivateResponse)
@@ -290,13 +303,14 @@ def get_status(team_id: str, request: Request, _=Depends(verify_controller_key))
         else:
             status = "unknown"
 
-        url = build_challenge_url(core_v1, team_id, challenge_id) if status == "running" else None
+        url, extra_ports = build_challenge_url(core_v1, team_id, challenge_id) if status == "running" else (None, None)
 
         challenges.append(
             ChallengeStatus(
                 challenge_id=challenge_id,
                 status=status,
                 url=url,
+                extra_ports=extra_ports,
                 activated_at=activated_at if activated_at else None,
             )
         )

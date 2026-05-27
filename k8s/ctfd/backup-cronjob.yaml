@@ -19,6 +19,14 @@
 # To force a manual backup at any time:
 #   kubectl create job --from=cronjob/mysql-backup manual-backup-$(date +%s) -n ctfd
 
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mysql-backup
+  namespace: ctfd
+automountServiceAccountToken: false
+
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -38,7 +46,8 @@ spec:
       template:
         spec:
           restartPolicy: Never
-          serviceAccountName: default
+          serviceAccountName: mysql-backup
+          automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: false  # mysql:8 runs as root internally
             seccompProfile:
@@ -106,7 +115,7 @@ spec:
           # Phase 2: upload to DO Spaces and rotate old backups
           containers:
           - name: upload
-            image: amazon/aws-cli:latest
+            image: amazon/aws-cli:2.17.52
             securityContext:
               allowPrivilegeEscalation: false
             env:

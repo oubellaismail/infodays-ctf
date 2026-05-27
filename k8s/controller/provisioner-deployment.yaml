@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller-provisioner
+  namespace: ctfd
+  labels:
+    app: controller-provisioner
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: controller-provisioner
+  template:
+    metadata:
+      labels:
+        app: controller-provisioner
+    spec:
+      serviceAccountName: ctf-provisioner
+      imagePullSecrets:
+      - name: docr-pull-secret
+      containers:
+      - name: controller-provisioner
+        image: registry.digitalocean.com/infodays-registry/base:controller-api
+        imagePullPolicy: Always
+        command:
+        - /bin/sh
+        - -c
+        - sleep infinity
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+        env:
+        - name: CTF_MASTER_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: ctfd-secrets
+              key: CTF_MASTER_SECRET
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "512Mi"
+        volumeMounts:
+        - name: challenge-manifests
+          mountPath: /app/challenges/manifests
+          readOnly: true
+      volumes:
+      - name: challenge-manifests
+        configMap:
+          name: challenge-manifests
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault

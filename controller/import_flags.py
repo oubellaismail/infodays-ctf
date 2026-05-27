@@ -56,7 +56,7 @@ def fetch_challenges(ctfd_url: str, admin_token: str) -> dict:
     Returns:
         Dict mapping challenge name → ctfd_id
     """
-    url = f"{ctfd_url}/api/v1/challenges?per_page=100"
+    url = f"{ctfd_url}/api/v1/challenges?view=admin&per_page=100"
     headers = {"Authorization": f"Token {admin_token}", "Content-Type": "application/json"}
 
     try:

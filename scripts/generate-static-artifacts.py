@@ -53,16 +53,13 @@ MANIFESTS_DIR = REPO / "challenges" / "manifests"
 
 STATIC_FILE_CHALLENGES = {
     # challenge_id: {"type": "single"|"multi", "gen": <function_name>}
-    "cipher-championship":   {"type": "multi",  "gen": "gen_cipher_championship"},
+    # Finals challenges only — qual challenges (cipher-championship, var-mobile-companion,
+    # kdb-scouting-report, venue-recon, legends-gate) intentionally excluded.
     "tournament-bracket":    {"type": "multi",  "gen": "gen_tournament_bracket"},
-    "var-mobile-companion":  {"type": "multi",  "gen": "gen_var_mobile_companion"},
-    "kdb-scouting-report":   {"type": "multi",  "gen": "gen_kdb_scouting_report"},
     "var-override":          {"type": "single", "gen": "gen_var_override"},
     "coach-formation":       {"type": "single", "gen": "gen_coach_formation"},
     "vip-invitation":        {"type": "single", "gen": "gen_vip_invitation"},
-    "venue-recon":           {"type": "single", "gen": "gen_venue_recon"},
-    "legends-gate":          {"type": "single", "gen": "gen_legends_gate"},
-    "general-mbappe": {"type": "single", "gen": "gen_general_mbappe"},
+    "general-mbappe":        {"type": "single", "gen": "gen_general_mbappe"},
 }
 
 # Multi-flag component scoring params (initial, minimum, decay) per challenge
@@ -707,6 +704,7 @@ def ctfd_get(url: str, token: str, path: str) -> dict:
 
 def ctfd_post(url: str, token: str, path: str, body: dict) -> dict:
     import urllib.request
+    import urllib.error
     data = json.dumps(body).encode()
     req = urllib.request.Request(
         url.rstrip("/") + path,
@@ -720,8 +718,19 @@ def ctfd_post(url: str, token: str, path: str, body: dict) -> dict:
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        # CTFd sometimes returns 3xx or 500 even when the write succeeded.
+        # Treat these as non-fatal — the DB row was committed before the error.
+        if e.code in (302, 303, 500):
+            return {"success": True}
+        body_text = ""
+        try:
+            body_text = e.read().decode()
+        except Exception:
+            pass
+        print(f"    CTFd error: {body_text}", file=sys.stderr)
+        raise
     except Exception as e:
-        # Print error body if available
         if hasattr(e, "read"):
             print(f"    CTFd error: {e.read().decode()}", file=sys.stderr)
         raise
@@ -783,7 +792,6 @@ def register_exact_flag(ctfd_url: str, token: str, challenge_id: int,
         "challenge_id": challenge_id,
         "type": "static",
         "content": flag_value,
-        "data": str(team_id),  # store team_id for reference
     })
 
 
@@ -820,16 +828,12 @@ def register_multi_flag_team_flags(
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 GENERATORS = {
-    "cipher-championship":  gen_cipher_championship,
+    # Finals challenges only — qual challenges intentionally excluded.
     "tournament-bracket":   gen_tournament_bracket,
-    "var-mobile-companion": gen_var_mobile_companion,
-    "kdb-scouting-report":  gen_kdb_scouting_report,
     "var-override":         gen_var_override,
     "coach-formation":      gen_coach_formation,
     "vip-invitation":       gen_vip_invitation,
-    "venue-recon":          gen_venue_recon,
-    "legends-gate":         gen_legends_gate,
-    "general-mbappe": gen_general_mbappe,
+    "general-mbappe":       gen_general_mbappe,
 }
 
 

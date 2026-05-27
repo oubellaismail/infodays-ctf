@@ -12,7 +12,7 @@ spec:
     matchExpressions:
     - key: app
       operator: In
-      values: [controller-api, controller-daemon]
+      values: [controller-api, controller-daemon, controller-provisioner]
   egress:
   - to:
     - ipBlock:
@@ -306,7 +306,7 @@ spec:
     matchExpressions:
     - key: app
       operator: In
-      values: [controller-api, controller-daemon]
+      values: [controller-api, controller-daemon, controller-provisioner]
   egress:
   - to:
     - podSelector:
@@ -334,7 +334,7 @@ spec:
         matchExpressions:
         - key: app
           operator: In
-          values: [controller-api, controller-daemon]
+          values: [controller-api, controller-daemon, controller-provisioner]
     ports:
     - protocol: TCP
       port: 8000
